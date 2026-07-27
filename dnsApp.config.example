@@ -1,0 +1,51 @@
+{
+  "enableBlocking": true,
+  "blockingAnswerTtl": 60,
+  "blockListUrlUpdateIntervalHours": 24,
+  "blockListUrlUpdateIntervalMinutes": 0,
+  "networkGroupMap": {
+    "0.0.0.0/0": "Default",
+    "192.168.1.10": "Kids"
+  },
+  "groups": [
+    {
+      "name": "Default",
+      "enableBlocking": true,
+      "allowTxtBlockingReport": false,
+      "blockAsNxDomain": false,
+      "blockingAddresses": [],
+      "allowedDomains": [],
+      "blockedDomains": [],
+      "allowListUrls": [],
+      "blockLists": [
+        "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+      ],
+      "allowedRegex": [],
+      "blockedRegex": [],
+      "regexAllowListUrls": [],
+      "regexBlockListUrls": [],
+      "adblockListUrls": []
+    },
+    {
+      "name": "Kids",
+      "enableBlocking": true,
+      "allowTxtBlockingReport": false,
+      "blockAsNxDomain": true,
+      "blockingAddresses": [],
+      "allowedDomains": [],
+      "blockedDomains": [
+        "example-adult-content.test"
+      ],
+      "allowListUrls": [],
+      "blockLists": [
+        "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+        "https://someonewhocares.org/hosts/zero/hosts"
+      ],
+      "allowedRegex": [],
+      "blockedRegex": [],
+      "regexAllowListUrls": [],
+      "regexBlockListUrls": [],
+      "adblockListUrls": []
+    }
+  ]
+}

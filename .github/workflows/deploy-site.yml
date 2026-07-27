@@ -53,6 +53,15 @@ jobs:
         run: npm run build
         working-directory: ./marketing
 
+      - name: "🔗 Check internal links use the base path"
+        run: |
+          if grep -rE 'href="/(user-guide|cli-reference|installation|release-notes)' dist --include='*.html'; then
+            echo "::error::Found internal link(s) missing the /pharos-advanced-blocking base path prefix (see matches above)."
+            exit 1
+          fi
+          echo "No un-prefixed internal links found."
+        working-directory: ./marketing
+
       - name: "📤 Upload Pages Artifact"
         uses: actions/upload-pages-artifact@v3
         with:

@@ -1,12 +1,8 @@
 ---
 layout: ../layouts/Layout.astro
 title: "CLI Reference | Pharos Advanced Blocking"
----
-
-# CLI Reference
-
-The `pab` CLI provides a pragmatic interface for managing Technitium DNS blocking configurations via the command line and interactive TUI.
-
+heading: "CLI Reference"
+description: "The pab CLI provides a pragmatic interface for managing Technitium DNS blocking configurations via the command line and interactive TUI."
 ---
 
 ## Global Flag
@@ -42,7 +38,51 @@ pab
 - Tab-complete slash commands for power-user efficiency
 - Exit via `/exit` or `Ctrl+C`
 
-**See also:** [Interactive Mode — Slash Commands](/user-guide#interactive-mode--slash-commands) and [Tab Completion](/user-guide#tab-completion) in the User Guide.
+**See also:** [Interactive Mode — Slash Commands](/pharos-advanced-blocking/user-guide/#interactive-mode--slash-commands) and [Tab Completion](/pharos-advanced-blocking/user-guide/#tab-completion) in the User Guide.
+
+---
+
+## Command: `pab init`
+
+Bootstrap a local `dnsApp.config` from a Technitium server (or a blank template).
+
+**What it does:** Resolves your Technitium credentials, fetches the live Advanced Blocking configuration from the server, and previews it. If the server has no existing configuration (a fresh Technitium instance), `pab init` falls back to a minimal template instead of leaving you with nothing. If two or more nodes are configured, it also checks that they agree on their current configuration before proceeding — it never auto-merges disagreeing nodes. Nothing is written to disk until you explicitly confirm. If a local `dnsApp.config` already exists, `pab init` diffs it against the fetched/template configuration before asking to overwrite, so it never silently clobbers an existing file.
+
+**Syntax:**
+```bash
+pab init [--node <name>] [-f, --force] [--json]
+```
+
+**Flags:**
+- `--node <name>`: Node to fetch from (and, if two or more configured nodes disagree on their current configuration, the explicit source of truth)
+- `-f, --force`: Write the resolved configuration without an interactive confirmation prompt
+- `--json`: Print the resolved configuration as JSON and exit without writing or prompting
+
+**Examples:**
+
+First-time setup, fetching from your only configured node:
+```bash
+pab init
+```
+
+Fetch from a specific node when more than one is configured:
+```bash
+pab init --node prod
+```
+
+Non-interactive/scripted preview (fails clearly if no credentials are resolvable — does not prompt):
+```bash
+pab init --json > dnsApp.config.preview.json
+```
+
+Re-sync and overwrite an existing local `dnsApp.config` without a confirmation prompt:
+```bash
+pab init -f
+```
+
+**When to use:** The very first time you set up `pab` against a running Technitium server, or any time you want to re-sync your local `dnsApp.config` with what's actually deployed.
+
+**Credential resolution:** Same rule as `pab deploy`/`pab verify` — one node via `TECHNITIUM_URL`/`TECHNITIUM_TOKEN`, two or more via `~/.config/pab/secrets.json`. If neither is set, `pab init` prompts for them interactively (unless `--json` is set, which errors instead of prompting): for a single node it prints the `export` lines for you to add to your shell profile; for two or more nodes it writes `secrets.json` (`chmod 600`, set at creation) for you. See [Installation & Credentials](/pharos-advanced-blocking/user-guide/#installation--credentials) in the User Guide for the full picture.
 
 ---
 
@@ -153,20 +193,79 @@ pab deploy -f
 **When to use:** Pushing validated configurations to your Technitium instances, verifying changes in dry-run mode before committing, or automating deployments in GitOps workflows.
 
 **Configuration Discovery:**
-`pab deploy` resolves Technitium node URLs and API tokens from:
-1. Environment variables: `TECHNITIUM_NODE_<name>_URL` and `TECHNITIUM_NODE_<name>_TOKEN`
-2. Environment variable fallback: `TECHNITIUM_URL` and `TECHNITIUM_TOKEN` (for single node)
-3. Config file: `~/.config/pab/secrets.json` (must have `chmod 600` permissions)
+`pab deploy` (and `pab init`/`pab verify`) resolve Technitium node URLs and API tokens from:
+1. **One node**: environment variables `TECHNITIUM_URL` and `TECHNITIUM_TOKEN` (registered internally as `"default"`)
+2. **Two or more nodes**: `~/.config/pab/secrets.json` (must have `chmod 600` permissions) — there is no multi-node environment variable pattern
+
+See [Installation & Credentials](/pharos-advanced-blocking/user-guide/#installation--credentials) in the User Guide for the full setup, including writing `secrets.json` from a CI secret.
+
+---
+
+## Command: `pab verify`
+
+Query a node's live DNS resolver to confirm a domain is actually being blocked.
+
+**What it does:** Sends a live DNS query for `--domain` directly to the target Technitium node's resolver (bypassing your system resolver/cache) and compares the response against the configured blocking behavior of the group `--domain` belongs to (`blockAsNxDomain`/`blockingAddresses` in your local `dnsApp.config`). This confirms blocking actually took effect on the server — not just that `pab deploy` successfully sent a config to the API.
+
+**Syntax:**
+```bash
+pab verify --domain <domain> [--node <name>] [--group <name>] [--port <port>] [--json]
+```
+
+**Flags:**
+- `--domain <domain>` (required): Domain to test-query against the node's DNS resolver
+- `--node <name>`: Node to query (required when more than one node is configured — `pab verify` queries exactly one node, unlike `pab deploy`'s fan-out)
+- `--group <name>`: Explicit group to verify against, for domains not covered by a literal `blockedDomains`/`blockedRegex` entry (e.g. domains only blocked indirectly via a remote block-list URL, which `pab verify` does not fetch or search)
+- `--port <port>` (default: `53`): DNS port to query on the target node
+- `--json`: Print the verification result as JSON
+
+**Examples:**
+
+Confirm a domain is blocked right after deploying:
+```bash
+pab deploy -f && pab verify --domain ads.example.com
+```
+
+Verify against a specific node when more than one is configured:
+```bash
+pab verify --domain ads.example.com --node prod
+```
+
+Verify a domain only covered by a remote block-list URL, specifying its group explicitly:
+```bash
+pab verify --domain doubleclick.net --group Default
+```
+
+Machine-readable result for scripting:
+```bash
+pab verify --domain ads.example.com --json
+```
+
+**When to use:** Right after `pab deploy`, to confirm blocking took effect on the live server. Exits non-zero unless the result is exactly `blocked`, so it's safe to chain directly in CI/CD after `pab deploy`.
+
+**A note on results:** `pab verify` reports one of four outcomes — `blocked`, `not-blocked`, `inconclusive` (e.g. a sinkhole-style group with no `blockingAddresses` configured, so pab can't compare the live response against anything), or `error` (the DNS query itself failed). Only `blocked` is treated as a confirmed pass.
 
 ---
 
 ## Tips for CLI Integration
+
+**Bootstrap Before You Map:**
+No local `dnsApp.config` yet? Run `pab init` first — it fetches your server's live configuration (or a starter template if there is none) and writes it only after you confirm:
+```bash
+pab init
+```
 
 **Dry-Run Before Deploy:**
 Always run `--dry-run` first to see what will change:
 ```bash
 pab deploy --dry-run
 pab deploy -f
+```
+
+**Confirm It Worked:**
+After deploying, chain `pab verify` to confirm blocking actually took effect on the server, not just that the API accepted your config:
+```bash
+pab deploy -f && pab verify --domain ads.example.com
 ```
 
 **Automation with `-f, --force`:**
@@ -187,5 +286,5 @@ pab deploy --dry-run || exit 1
 
 ## See Also
 
-- [User Guide](/user-guide): Setup, credentials, quickstart, and interactive mode
-- [Installation](/installation): Install the CLI
+- [User Guide](/pharos-advanced-blocking/user-guide/): Setup, credentials, quickstart, and interactive mode
+- [Installation](/pharos-advanced-blocking/installation/): Install the CLI

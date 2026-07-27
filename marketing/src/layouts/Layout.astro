@@ -5,20 +5,28 @@ interface Props {
   title?: string;
   frontmatter?: {
     title?: string;
+    heading?: string;
+    description?: string;
   };
+  headings?: { depth: number; slug: string; text: string }[];
 }
 
-const { title, frontmatter } = Astro.props;
+const { title, frontmatter, headings } = Astro.props;
 const pageTitle = title || frontmatter?.title || 'Pharos Advanced Blocking';
 const isProse = !!frontmatter;
 const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+const tocHeadings = (headings ?? []).filter((h) => h.depth === 2);
+const showToc = isProse && tocHeadings.length > 6;
+const pageHeading = frontmatter?.heading;
+const pageDescription = frontmatter?.description;
+const metaDescription = pageDescription || 'Pharos Advanced Blocking - Next-generation DNS and IP blocking';
 ---
 
 <!DOCTYPE html>
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="description" content="Pharos Advanced Blocking - Next-generation DNS and IP blocking" />
+    <meta name="description" content={metaDescription} />
     <meta name="viewport" content="width=device-width" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="generator" content={Astro.generator} />
@@ -42,6 +50,19 @@ const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
     <main class="flex-grow">
       {isProse ? (
         <article class="container-custom py-12 max-w-4xl mx-auto prose dark:prose-invert">
+          {pageHeading && <h1 id={pageHeading.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}>{pageHeading}</h1>}
+          {pageDescription && <p>{pageDescription}</p>}
+          {pageHeading && <hr />}
+          {showToc && (
+            <nav class="toc mb-8 p-4 rounded-lg border border-secondary-200 dark:border-secondary-800 bg-secondary-50 dark:bg-secondary-900/50 not-prose">
+              <p class="font-semibold text-sm uppercase tracking-wide text-secondary-500 dark:text-secondary-400 mb-2">On this page</p>
+              <ul class="space-y-1 text-sm">
+                {tocHeadings.map((h) => (
+                  <li><a href={`#${h.slug}`} class="hover:text-primary-500">{h.text}</a></li>
+                ))}
+              </ul>
+            </nav>
+          )}
           <slot />
         </article>
       ) : (

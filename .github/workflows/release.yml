@@ -37,3 +37,14 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify release has assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          asset_count=$(gh release view "${{ github.ref_name }}" --json assets --jq '.assets | length')
+          echo "Published release ${{ github.ref_name }} has $asset_count asset(s)."
+          if [ "$asset_count" -eq 0 ]; then
+            echo "::error::Release ${{ github.ref_name }} was published with zero assets. Failing the job so this can't ship silently broken."
+            exit 1
+          fi
