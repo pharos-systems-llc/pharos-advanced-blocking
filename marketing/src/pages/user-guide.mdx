@@ -1,17 +1,23 @@
 ---
 layout: ../layouts/Layout.astro
 title: "User Guide | Pharos Advanced Blocking"
+heading: "User Guide"
+description: "Welcome to the User Guide for Pharos Advanced Blocking (pab). This guide covers setup, credentials, the interactive TUI, and command-line operations."
 ---
 
-# User Guide
+## Quickstart: From Zero to a Confirmed Block
 
-Welcome to the User Guide for **Pharos Advanced Blocking (pab)**. This guide covers setup, credentials, the interactive TUI, and command-line operations.
+### 1. Bootstrap Your Configuration (First Time Only)
 
----
+If you don't already have a `dnsApp.config` file, point `pab` at your running Technitium server — no copy-paste, no blank JSON file:
 
-## Quickstart: Getting Started in 30 Seconds
+```bash
+pab init
+```
 
-### 1. Run `pab` (Interactive Mode)
+`pab init` resolves your Technitium credentials, fetches the server's live Advanced Blocking configuration (or falls back to a starter template if the server has none yet), previews what it found, and asks you to confirm before writing anything to disk. See [Installation & Credentials](#installation--credentials) below for how to set up `TECHNITIUM_URL`/`TECHNITIUM_TOKEN` (one node) or `secrets.json` (two or more nodes) — or just run `pab init` with nothing set up yet and it will prompt you for them.
+
+### 2. Run `pab` (Interactive Mode)
 
 Open your terminal in the directory containing your Technitium `dnsApp.config` file and type:
 
@@ -28,17 +34,18 @@ If you're in a terminal (TTY), the interactive TUI dashboard opens immediately.
 - `pab map --ip <ip> --group <group>` — Add or update a client IP mapping
 - `pab deploy --dry-run` — Preview changes before applying
 - `pab deploy -f` — Apply changes to your Technitium instances in CI/CD
+- `pab verify --domain <domain>` — Confirm a domain is actually being blocked
 
 This is by design: the TUI is built for humans exploring interactively; CLI commands are designed for scripts, automation, and non-interactive environments. You get the full power of `pab` in either mode—just pick the right tool for your workflow.
 
-### 2. Explore Your Configuration
+### 3. Explore Your Configuration
 
 The TUI shows:
 - Your current client IP → group mappings
 - Real-time search by IP or group name
 - Available blocking groups and device counts
 
-### 3. Use Slash Commands
+### 4. Use Slash Commands
 
 Type `/help` to see all available commands, or try:
 
@@ -47,13 +54,23 @@ Type `/help` to see all available commands, or try:
 - `/clear` — Reset search and filters
 - `/exit` — Close the TUI
 
-### 4. Use Tab Completion for Command Names
+### 5. Use Tab Completion for Command Names
 
 Type `/v[Tab]` — it auto-completes to `/view ` (with trailing space). Tab completion works for **command names only** (e.g., `/e[Tab]` → `/exit `). Group name autocomplete in search mode is coming in a future release—for now, Tab navigates through filtered results.
 
-### 5. Exit
+### 6. Exit
 
 Press `Ctrl+C` or type `/exit` to close the TUI.
+
+### 7. Confirm It Worked
+
+Once you've mapped devices and deployed with `pab deploy`, confirm blocking actually took effect by querying the live server directly:
+
+```bash
+pab verify --domain ads.example.com
+```
+
+See [Mapping & Deploying](#mapping--deploying) below for the full map → dry-run → deploy → verify workflow.
 
 **Next Steps:** Explore the [Interactive Mode](#interactive-mode--slash-commands) section to master slash commands, or jump to [Mapping & Deploying](#mapping--deploying) to assign devices programmatically.
 
@@ -61,37 +78,31 @@ Press `Ctrl+C` or type `/exit` to close the TUI.
 
 ## TUI Interface Preview
 
-When you run `pab`, you'll see the interactive TUI welcome screen below. This is your command center for managing DNS blocking policies.
+When you run `pab`, you'll see a title bar, an empty content area, a search prompt, and a footer of keyboard hints — your command center for managing DNS blocking policies:
 
 ```
 ╭──────────────────────────────────────────────────────────────────╮
+│ Pharos Advanced Blocking                                         │
 │                                                                  │
-│   Pharos Advanced Blocking                                       │
-│                                                                  │
-│  Welcome to Pharos Advanced Blocking!                            │
-│  Quick start: Type to search by IP/Group, or /help for commands  │
-│                                                                  │
-│  Tip: Press / to see all available commands                      │
-│  Tip: Press Tab in search to navigate through filtered results   │
 │                                                                  │
 │                                                                  │
 │   > Search or type /help for commands                            │
 │                                                                  │
 │  ctrl+c / esc: exit | /help: commands | /clear: reset            │
-│                                                                  │
 ╰──────────────────────────────────────────────────────────────────╯
 ```
+
+There's no welcome banner or first-run tips on the opening screen today — type `/help` to see the full command list. (A first-run welcome banner exists in the codebase but is currently disabled pending a rendering fix, so it isn't part of the current release.)
 
 ### Key Interface Elements
 
 - **Title Banner**: "Pharos Advanced Blocking" with blue-tinted styling
-- **Welcome Message**: Quick orientation and tips for first-time users
+- **Content Area**: Empty until you search or run a slash command like `/view groups`
 - **Search Prompt** (`>`): Type IPs or group names to filter your network
 - **Footer Hints**: Keyboard shortcuts for navigation and common commands
   - `ctrl+c` / `esc`: Exit the TUI
   - `/help`: View all available commands
   - `/clear`: Reset search filters
-  - `↑↓`: Scroll through command history in future releases
 
 The interface is built with Bubbletea (Go TUI framework) and uses responsive sizing to fit your terminal. All interactions are keyboard-driven for speed and efficiency.
 
@@ -118,7 +129,7 @@ Pharos Advanced Blocking offers two ways to manage your DNS configuration. Choos
 - **Production deployments**: Use `pab deploy --dry-run` to preview changes before applying with `-f`
 - **Non-interactive environments**: Running in containers or cron jobs where a terminal isn't available
 
-**Commands**: `pab map`, `pab unmap`, `pab deploy`, `pab --help`
+**Commands**: `pab init`, `pab map`, `pab unmap`, `pab deploy`, `pab verify`, `pab --help`
 
 ### Summary
 
@@ -139,52 +150,83 @@ Pharos Advanced Blocking offers two ways to manage your DNS configuration. Choos
 
 ### Install pab
 
-Follow the [Installation](/installation) guide to install the CLI.
+Follow the [Installation](/pharos-advanced-blocking/installation/) guide to install the CLI.
 
 ### Set Up Credentials
 
-`pab` does NOT require credentials to start up or use interactive mode (reads local `dnsApp.config`). Credentials are only needed when deploying to a Technitium server via the `pab deploy` command.
+`pab` does NOT require credentials to start up or use interactive mode (reads local `dnsApp.config`). Credentials are only needed when deploying to a Technitium server via the `pab deploy` command (or fetching one via `pab init`).
 
-**Option 1: Environment Variables** (recommended for CI/CD)
+**How you supply credentials depends on how many Technitium nodes you manage** — that's the whole decision:
 
-For a single Technitium node:
+| You manage... | Use | Works in |
+|----------------|-----|----------|
+| **1 node** | Environment variables | Any environment, including CI/CD |
+| **2+ nodes** | `secrets.json` | Any environment, including CI/CD |
+
+The easiest way to set either one up is `pab init` — it prompts for credentials, asks whether you manage more than one node, and either prints the export lines for you to add to your shell profile (1 node) or writes `secrets.json` with `chmod 600` for you (2+ nodes). The manual steps below are what `pab init` automates.
+
+Here's exactly what you'll see when you run `pab init` with nothing set up yet. Answer "n" if you manage a single Technitium instance:
+
+```
+No Technitium credentials found via environment variables or secrets.json.
+Technitium server URL (e.g. https://dns.example.com:5380): https://dns.example.com:5380
+API token: your-api-token-here
+Do you manage more than one Technitium node? [y/N]: n
+
+Single-node setup. pab cannot persist environment variables for you;
+add the following to your shell profile (e.g. ~/.bashrc, ~/.zshrc):
+
+  export TECHNITIUM_URL="https://dns.example.com:5380"
+  export TECHNITIUM_TOKEN="your-api-token-here"
+```
+
+Answer "y" if you manage two or more nodes — you'll be asked to name and enter each one (the "Add another node?" prompt repeats until you decline), and `pab init` writes them straight to `secrets.json` at `chmod 600`:
+
+```
+No Technitium credentials found via environment variables or secrets.json.
+Technitium server URL (e.g. https://dns.example.com:5380): https://dns1.example.com:5380
+API token: token-for-dns1
+Do you manage more than one Technitium node? [y/N]: y
+Name for this node (e.g. dns1, prod): dns1
+Add another node? [y/N]: y
+  Node URL: https://dns2.example.com:5380
+  API token: token-for-dns2
+  Node name: dns2
+Add another node? [y/N]: n
+
+Wrote 2 node(s) to /home/user/.config/pab/secrets.json (chmod 600).
+```
+
+Either way, the rest is automated — no manual file editing needed.
+
+**1 node: Environment Variables**
 
 ```bash
 export TECHNITIUM_URL="https://dns.example.com:5380"
 export TECHNITIUM_TOKEN="your_api_token_here"
 ```
 
-For multiple identical nodes (active-active replication):
-
-```bash
-export TECHNITIUM_NODE_DNS1_URL="https://dns1.example.com:5380"
-export TECHNITIUM_NODE_DNS1_TOKEN="token_for_dns1"
-
-export TECHNITIUM_NODE_DNS2_URL="https://dns2.example.com:5380"
-export TECHNITIUM_NODE_DNS2_TOKEN="token_for_dns2"
-```
-
-Deploy to all nodes with a single command:
+`TECHNITIUM_URL`/`TECHNITIUM_TOKEN` configure exactly one node (registered internally as `"default"`). There is no multi-node environment variable pattern — as soon as you're managing a second node, move to `secrets.json` below.
 
 ```bash
 pab deploy --dry-run  # Validate first
-pab deploy -f         # Deploy to all nodes simultaneously
+pab deploy -f         # Deploy without a confirmation prompt
 ```
 
-The `-f` flag forces deployment without confirmation prompts. All nodes receive identical configs.
+**2+ nodes: Secrets File**
 
-**Option 2: Secrets File** (recommended for local development)
-
-Create a secrets file at `~/.config/pab/secrets.json` with mode `chmod 600`:
+Create a secrets file at `~/.config/pab/secrets.json` with mode `chmod 600`. Each node can optionally carry a `name` (falls back to `node-0`, `node-1`, ... when omitted) so `pab list-nodes` and `pab deploy --node <name>` have something stable to target:
 
 ```json
 {
   "nodes": [
     {
+      "name": "dns1",
       "url": "https://dns1.example.com:5380",
       "token": "token_for_dns1"
     },
     {
+      "name": "dns2",
       "url": "https://dns2.example.com:5380",
       "token": "token_for_dns2"
     }
@@ -198,7 +240,21 @@ pab deploy --dry-run  # Validate first
 pab deploy -f         # Deploy to all nodes simultaneously
 ```
 
-**Security:** Both approaches work; choose what fits your workflow. Environment variables are safer in CI/CD (no secrets files in repos). Secrets files are convenient for local development (not committed to Git).
+**Using `secrets.json` in CI/CD:** since 2+ nodes always means `secrets.json`, write it from a CI secret to a temp path immediately before deploying, keeping it off disk the rest of the time:
+
+```bash
+export XDG_CONFIG_HOME=/tmp/pab-config
+umask 077
+mkdir -p "$XDG_CONFIG_HOME/pab"
+printf '%s' "$SECRETS_JSON" > "$XDG_CONFIG_HOME/pab/secrets.json"
+chmod 600 "$XDG_CONFIG_HOME/pab/secrets.json"
+pab deploy -f
+rm -rf "$XDG_CONFIG_HOME"
+```
+
+(Store the file's JSON contents as a single CI secret, e.g. `SECRETS_JSON` — pab reads `$XDG_CONFIG_HOME/pab/secrets.json` on Linux, so pointing `XDG_CONFIG_HOME` at a scratch directory keeps the real credentials off disk outside the job.)
+
+**Security:** Environment variables are simplest for a single node and never touch disk. `secrets.json` is required once you have two or more nodes, and `pab` refuses to run if its permissions are weaker than `chmod 600`.
 
 ---
 
@@ -430,6 +486,7 @@ Once your configuration is ready, manage updates using the CLI commands:
 1. **Map Policies** (`pab map`): Assign client IPs to blocking groups
 2. **Preview Changes** (`pab deploy --dry-run`): Validate and inspect what will change
 3. **Deploy** (`pab deploy`): Sync to your Technitium instances
+4. **Verify** (`pab verify`): Confirm blocking actually took effect on the live server
 
 ### Step 1: Map a Client IP
 
@@ -476,9 +533,35 @@ Or target a specific node:
 pab deploy -f --node production
 ```
 
+### Step 4: Verify It Worked
+
+Deploying successfully means the config was written to the API — it doesn't guarantee Technitium is actually blocking the domain yet. Close the loop with a live DNS query:
+
+```bash
+pab verify --domain ads.example.com
+```
+
+`pab verify` queries the target node's DNS resolver directly and checks the response against that domain's group's configured blocking behavior. It reports `blocked`, `not-blocked`, `inconclusive` (e.g. a sinkhole-style group with no `blockingAddresses` configured, so pab has nothing to compare the response against), or `error`, and exits non-zero unless the result is exactly `blocked` — safe to chain directly after deploy in a script or CI job:
+
+```bash
+pab deploy -f && pab verify --domain ads.example.com
+```
+
+If the domain is only covered by a remote block-list URL (not a literal entry in `blockedDomains`/`blockedRegex`), pass `--group` explicitly — `pab verify` doesn't fetch and search remote lists to attribute a domain automatically:
+
+```bash
+pab verify --domain doubleclick.net --group Default
+```
+
+When you manage more than one node, pass `--node` to pick which one to query — `pab verify` checks exactly one node per run, unlike `pab deploy`'s fan-out to all configured nodes:
+
+```bash
+pab verify --domain ads.example.com --node production
+```
+
 ### Multi-Device Example
 
-Map several devices, then deploy once:
+Map several devices, then deploy and verify once:
 
 ```bash
 pab map --ip 192.0.2.50 --group Kids
@@ -486,6 +569,7 @@ pab map --ip 192.0.2.51 --group Kids
 pab map --ip 203.0.113.10 --group IoT
 pab deploy --dry-run
 pab deploy -f
+pab verify --domain ads.example.com
 ```
 
 ### Safety Features
@@ -493,41 +577,73 @@ pab deploy -f
 - **Schema validation:** Every `pab map` call validates your IP and group name before writing.
 - **Dry-run inspection:** `pab deploy --dry-run` shows changes without applying them.
 - **Confirmation prompts:** Deployment prompts once before sending to all nodes (use `-f` to skip if you've already verified with `--dry-run`).
+- **Live verification:** `pab verify --domain <domain>` confirms blocking actually took effect on the server — not just that the API accepted the config.
 - **Rollback safety:** One `pab deploy -f` can be undone by reverting your config file and re-deploying.
 
 ---
 
 ## Configuration File Format
 
-Your `dnsApp.config` is a Technitium JSON file. `pab` respects its structure and validates your edits.
+The fastest way to get a valid `dnsApp.config` is `pab init` (see [Quickstart](#quickstart-from-zero-to-a-confirmed-block) above) — it fetches your server's live configuration, or falls back to a starter template if the server has none yet, and writes it to disk only after you confirm.
 
-**Key sections relevant to pab:**
+If you'd rather build or edit `dnsApp.config` by hand, here's the schema `pab` understands (matching Technitium's own Advanced Blocking App schema):
 
 ```json
 {
-  "groups": [
-    {
-      "name": "Kids",
-      "blocked": ["ads.example.com", "..."],
-      "allowed": ["youtube.com", "..."]
-    },
-    {
-      "name": "IoT",
-      "blocked": ["..."],
-      "allowed": []
-    }
-  ],
+  "enableBlocking": true,
+  "blockingAnswerTtl": 60,
+  "blockListUrlUpdateIntervalHours": 24,
+  "blockListUrlUpdateIntervalMinutes": 0,
   "networkGroupMap": {
     "192.0.2.50": "Kids",
     "203.0.113.10": "IoT"
-  }
+  },
+  "groups": [
+    {
+      "name": "Kids",
+      "enableBlocking": true,
+      "allowTxtBlockingReport": false,
+      "blockAsNxDomain": true,
+      "blockingAddresses": [],
+      "allowedDomains": ["youtube.com"],
+      "blockedDomains": ["ads.example.com"],
+      "allowListUrls": [],
+      "blockLists": ["https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"],
+      "allowedRegex": [],
+      "blockedRegex": [],
+      "regexAllowListUrls": [],
+      "regexBlockListUrls": [],
+      "adblockListUrls": []
+    },
+    {
+      "name": "IoT",
+      "enableBlocking": true,
+      "allowTxtBlockingReport": false,
+      "blockAsNxDomain": false,
+      "blockingAddresses": ["0.0.0.0"],
+      "allowedDomains": [],
+      "blockedDomains": [],
+      "allowListUrls": [],
+      "blockLists": [],
+      "allowedRegex": [],
+      "blockedRegex": [],
+      "regexAllowListUrls": [],
+      "regexBlockListUrls": [],
+      "adblockListUrls": []
+    }
+  ]
 }
 ```
 
-- `groups`: Define your blocking rule sets (what domains to block/allow)
-- `networkGroupMap`: Map client IPs to groups (this is what `pab map` and `pab unmap` edit)
+- `enableBlocking` / `blockingAnswerTtl` / `blockListUrlUpdateInterval{Hours,Minutes}`: the global blocking toggle, DNS answer TTL for blocked responses, and how often Technitium refreshes remote block lists.
+- `networkGroupMap`: maps client IPs/CIDR ranges to groups — this is what `pab map` and `pab unmap` edit.
+- `groups`: each group's rule set:
+  - `blockedDomains` / `allowedDomains`: literal domain entries
+  - `blockedRegex` / `allowedRegex`: pattern-matched entries
+  - `blockLists` / `allowListUrls` / `adblockListUrls` / `regexBlockListUrls` / `regexAllowListUrls`: remote list URLs
+  - `blockAsNxDomain` / `blockingAddresses`: how a blocked query is actually answered — NXDOMAIN, or a sinkhole address. This is exactly what `pab verify` compares a live DNS response against.
 
-You can edit the file manually or via `pab` commands. Both approaches respect schema validation.
+A full working example lives at [`dnsApp.config.example`](https://github.com/iamrichardD/pharos-advanced-blocking/blob/main/dnsApp.config.example) in the repository root. You can edit the file manually, fetch it with `pab init`, or edit specific fields with `pab map`/`pab unmap` — all three paths respect the same schema validation.
 
 ---
 
@@ -540,6 +656,8 @@ Ensure `dnsApp.config` exists in your current directory, or specify `--config`:
 ```bash
 pab --config /etc/technitium/dnsApp.config map --ip 192.0.2.50 --group Kids
 ```
+
+No config yet? Run `pab init` to fetch one from your Technitium server (or generate a starter template) instead of creating one by hand.
 
 ### "Failed to deploy to node"
 
@@ -559,9 +677,14 @@ Ensure your IP is:
 
 The group name must exist in your `dnsApp.config`. Use `/view groups` in interactive mode to see all available groups.
 
+### `pab verify` reports "not-blocked" or "inconclusive"
+
+- **"not-blocked"**: the live DNS response didn't match the group's configured blocking behavior. Confirm you've deployed the latest config (`pab deploy -f`) and that the domain is actually listed in the group you expect (pass `--group` to check a specific one).
+- **"inconclusive"**: the group has `blockAsNxDomain: false` but no `blockingAddresses` configured, so pab has nothing to compare the live response against. Add a `blockingAddresses` entry to the group, or verify against a group that has one configured.
+
 ---
 
 ## See Also
 
-- [CLI Reference](/cli-reference): Full command documentation with examples
-- [Installation](/installation): Install and setup
+- [CLI Reference](/pharos-advanced-blocking/cli-reference/): Full command documentation with examples
+- [Installation](/pharos-advanced-blocking/installation/): Install and setup

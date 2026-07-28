@@ -584,13 +584,22 @@ func TestDeployCommand(t *testing.T) {
 		}
 		helperWriteConfig(t, configPath, cfg)
 
-		// Configure multiple nodes via environment variables
-		t.Setenv("TECHNITIUM_NODE_DNS1_URL", server.URL)
-		t.Setenv("TECHNITIUM_NODE_DNS1_TOKEN", "token1")
-		t.Setenv("TECHNITIUM_NODE_DNS2_URL", server.URL)
-		t.Setenv("TECHNITIUM_NODE_DNS2_TOKEN", "token2")
-		t.Setenv("TECHNITIUM_NODE_DNS3_URL", server.URL)
-		t.Setenv("TECHNITIUM_NODE_DNS3_TOKEN", "token3")
+		// Two or more nodes require secrets.json (env vars only support one node).
+		// Use the new "name" field to give each node a stable identity.
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		pabConfigDir := filepath.Join(tmpDir, "pab")
+		if err := os.MkdirAll(pabConfigDir, 0755); err != nil {
+			t.Fatalf("failed to create mock config dir: %v", err)
+		}
+		secretsPath := filepath.Join(pabConfigDir, "secrets.json")
+		secretsJSON := `{"nodes":[` +
+			`{"name":"dns1","url":"` + server.URL + `","token":"token1"},` +
+			`{"name":"dns2","url":"` + server.URL + `","token":"token2"},` +
+			`{"name":"dns3","url":"` + server.URL + `","token":"token3"}` +
+			`]}`
+		if err := os.WriteFile(secretsPath, []byte(secretsJSON), 0600); err != nil {
+			t.Fatalf("failed to write secrets file: %v", err)
+		}
 
 		var outBuf, errBuf bytes.Buffer
 		rootCmd := NewRootCmd(nil, &outBuf, &errBuf, "dev", "none", "unknown")
@@ -624,9 +633,16 @@ func TestDeployCommand(t *testing.T) {
 		}
 		helperWriteConfig(t, configPath, cfg)
 
-		// Configure only DNS1 node
-		t.Setenv("TECHNITIUM_NODE_DNS1_URL", "http://localhost:5380")
-		t.Setenv("TECHNITIUM_NODE_DNS1_TOKEN", "token1")
+		// Configure only a single named node via secrets.json
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		pabConfigDir := filepath.Join(tmpDir, "pab")
+		if err := os.MkdirAll(pabConfigDir, 0755); err != nil {
+			t.Fatalf("failed to create mock config dir: %v", err)
+		}
+		secretsPath := filepath.Join(pabConfigDir, "secrets.json")
+		if err := os.WriteFile(secretsPath, []byte(`{"nodes":[{"name":"dns1","url":"http://localhost:5380","token":"token1"}]}`), 0600); err != nil {
+			t.Fatalf("failed to write secrets file: %v", err)
+		}
 
 		var outBuf, errBuf bytes.Buffer
 		rootCmd := NewRootCmd(nil, &outBuf, &errBuf, "dev", "none", "unknown")
@@ -645,13 +661,22 @@ func TestDeployCommand(t *testing.T) {
 
 func TestListNodesCommand(t *testing.T) {
 	t.Run("displays_all_configured_nodes", func(t *testing.T) {
-		// Configure 3 nodes via environment variables
-		t.Setenv("TECHNITIUM_NODE_DNS1_URL", "http://dns1.example.com:5380")
-		t.Setenv("TECHNITIUM_NODE_DNS1_TOKEN", "token1")
-		t.Setenv("TECHNITIUM_NODE_DNS2_URL", "http://dns2.example.com:5380")
-		t.Setenv("TECHNITIUM_NODE_DNS2_TOKEN", "token2")
-		t.Setenv("TECHNITIUM_NODE_PROD_URL", "http://prod.example.com:5380")
-		t.Setenv("TECHNITIUM_NODE_PROD_TOKEN", "prod-token")
+		// Two or more nodes require secrets.json; use the "name" field for identity.
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		pabConfigDir := filepath.Join(tmpDir, "pab")
+		if err := os.MkdirAll(pabConfigDir, 0755); err != nil {
+			t.Fatalf("failed to create mock config dir: %v", err)
+		}
+		secretsPath := filepath.Join(pabConfigDir, "secrets.json")
+		secretsJSON := `{"nodes":[` +
+			`{"name":"dns1","url":"http://dns1.example.com:5380","token":"token1"},` +
+			`{"name":"dns2","url":"http://dns2.example.com:5380","token":"token2"},` +
+			`{"name":"prod","url":"http://prod.example.com:5380","token":"prod-token"}` +
+			`]}`
+		if err := os.WriteFile(secretsPath, []byte(secretsJSON), 0600); err != nil {
+			t.Fatalf("failed to write secrets file: %v", err)
+		}
 
 		var outBuf, errBuf bytes.Buffer
 		rootCmd := NewRootCmd(nil, &outBuf, &errBuf, "dev", "none", "unknown")
@@ -685,6 +710,68 @@ func TestListNodesCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("ignores_legacy_multi-node_env_var_patterns", func(t *testing.T) {
+		// The removed TECHNITIUM_NODE_<name>_URL/_TOKEN and TECHNITIUM_URL_<suffix>/
+		// TECHNITIUM_TOKEN_<suffix> patterns must no longer register any node.
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+		t.Setenv("TECHNITIUM_NODE_DNS1_URL", "http://dns1.example.com:5380")
+		t.Setenv("TECHNITIUM_NODE_DNS1_TOKEN", "token1")
+		t.Setenv("TECHNITIUM_URL_PROD", "http://prod.example.com:5380")
+		t.Setenv("TECHNITIUM_TOKEN_PROD", "prod-token")
+
+		var outBuf, errBuf bytes.Buffer
+		rootCmd := NewRootCmd(nil, &outBuf, &errBuf, "dev", "none", "unknown")
+		rootCmd.SetArgs([]string{"list-nodes"})
+
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("unexpected error executing list-nodes: %v", err)
+		}
+
+		output := outBuf.String()
+		if !strings.Contains(output, "No Technitium nodes configured") {
+			t.Errorf("expected legacy multi-node env var patterns to register no nodes, got: %s", output)
+		}
+	})
+
+	t.Run("reports_visible_merge_of_environment_and_secrets_json_sources", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		defer server.Close()
+
+		t.Setenv("TECHNITIUM_URL", server.URL)
+		t.Setenv("TECHNITIUM_TOKEN", "mock-token")
+
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		pabConfigDir := filepath.Join(tmpDir, "pab")
+		if err := os.MkdirAll(pabConfigDir, 0755); err != nil {
+			t.Fatalf("failed to create mock config dir: %v", err)
+		}
+		secretsPath := filepath.Join(pabConfigDir, "secrets.json")
+		if err := os.WriteFile(secretsPath, []byte(`{"nodes":[{"name":"backup","url":"http://backup.example.com:5380","token":"tok"}]}`), 0600); err != nil {
+			t.Fatalf("failed to write secrets file: %v", err)
+		}
+
+		var outBuf, errBuf bytes.Buffer
+		rootCmd := NewRootCmd(nil, &outBuf, &errBuf, "dev", "none", "unknown")
+		rootCmd.SetArgs([]string{"list-nodes"})
+
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("unexpected error executing list-nodes: %v", err)
+		}
+
+		output := outBuf.String()
+		if !strings.Contains(output, "Found 1 node(s) from environment variables + 1 from secrets.json = 2 total") {
+			t.Errorf("expected visible source merge summary, got: %s", output)
+		}
+		if !strings.Contains(output, "default") || !strings.Contains(output, "backup") {
+			t.Errorf("expected both 'default' and 'backup' nodes in output, got: %s", output)
+		}
+	})
+
 	t.Run("handles_no_nodes_configured", func(t *testing.T) {
 		// Clear any environment variables that might configure nodes
 		for _, env := range os.Environ() {
@@ -715,11 +802,21 @@ func TestListNodesCommand(t *testing.T) {
 	})
 
 	t.Run("formats_output_as_table", func(t *testing.T) {
-		// Configure 2 nodes with specific URLs
-		t.Setenv("TECHNITIUM_NODE_DNS1_URL", "http://dns1.example.com:5380")
-		t.Setenv("TECHNITIUM_NODE_DNS1_TOKEN", "token1")
-		t.Setenv("TECHNITIUM_NODE_DNS2_URL", "http://dns2.example.com:5380")
-		t.Setenv("TECHNITIUM_NODE_DNS2_TOKEN", "token2")
+		// Configure 2 named nodes via secrets.json with specific URLs
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		pabConfigDir := filepath.Join(tmpDir, "pab")
+		if err := os.MkdirAll(pabConfigDir, 0755); err != nil {
+			t.Fatalf("failed to create mock config dir: %v", err)
+		}
+		secretsPath := filepath.Join(pabConfigDir, "secrets.json")
+		secretsJSON := `{"nodes":[` +
+			`{"name":"dns1","url":"http://dns1.example.com:5380","token":"token1"},` +
+			`{"name":"dns2","url":"http://dns2.example.com:5380","token":"token2"}` +
+			`]}`
+		if err := os.WriteFile(secretsPath, []byte(secretsJSON), 0600); err != nil {
+			t.Fatalf("failed to write secrets file: %v", err)
+		}
 
 		var outBuf, errBuf bytes.Buffer
 		rootCmd := NewRootCmd(nil, &outBuf, &errBuf, "dev", "none", "unknown")
@@ -750,6 +847,169 @@ func TestListNodesCommand(t *testing.T) {
 		}
 		if !strings.Contains(output, "http://dns2.example.com:5380") {
 			t.Errorf("expected dns2 URL in table, got: %s", output)
+		}
+	})
+}
+
+// TestResolveNodes exercises resolveNodes/resolveNodesWithSources directly against
+// the new single-node-env-var + secrets.json(name field) design.
+func TestResolveNodes(t *testing.T) {
+	t.Run("single TECHNITIUM_URL/TOKEN pair resolves to the default node", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		t.Setenv("TECHNITIUM_URL", "http://solo.example.com:5380")
+		t.Setenv("TECHNITIUM_TOKEN", "solo-token")
+
+		nodes, counts, err := resolveNodesWithSources()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(nodes) != 1 {
+			t.Fatalf("expected exactly 1 node, got %d: %+v", len(nodes), nodes)
+		}
+		node, ok := nodes["default"]
+		if !ok {
+			t.Fatalf("expected node named \"default\", got: %+v", nodes)
+		}
+		if node.URL != "http://solo.example.com:5380" || node.Token != "solo-token" {
+			t.Errorf("unexpected node contents: %+v", node)
+		}
+		if counts.Environment != 1 || counts.SecretsFile != 0 {
+			t.Errorf("unexpected source counts: %+v", counts)
+		}
+	})
+
+	t.Run("legacy TECHNITIUM_NODE_* and TECHNITIUM_URL_<suffix> patterns are ignored", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		t.Setenv("TECHNITIUM_NODE_DNS1_URL", "http://dns1.example.com:5380")
+		t.Setenv("TECHNITIUM_NODE_DNS1_TOKEN", "token1")
+		t.Setenv("TECHNITIUM_URL_PROD", "http://prod.example.com:5380")
+		t.Setenv("TECHNITIUM_TOKEN_PROD", "prod-token")
+
+		nodes, counts, err := resolveNodesWithSources()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(nodes) != 0 {
+			t.Errorf("expected legacy env var patterns to register no nodes, got: %+v", nodes)
+		}
+		if counts.Environment != 0 || counts.SecretsFile != 0 {
+			t.Errorf("unexpected source counts: %+v", counts)
+		}
+	})
+
+	t.Run("secrets.json name field is used when present", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		pabConfigDir := filepath.Join(tmpDir, "pab")
+		if err := os.MkdirAll(pabConfigDir, 0755); err != nil {
+			t.Fatalf("failed to create mock config dir: %v", err)
+		}
+		secretsPath := filepath.Join(pabConfigDir, "secrets.json")
+		if err := os.WriteFile(secretsPath, []byte(`{"nodes":[{"name":"prod","url":"http://prod.example.com:5380","token":"tok"}]}`), 0600); err != nil {
+			t.Fatalf("failed to write secrets file: %v", err)
+		}
+
+		nodes, counts, err := resolveNodesWithSources()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := nodes["prod"]; !ok {
+			t.Fatalf("expected node named \"prod\", got: %+v", nodes)
+		}
+		if _, ok := nodes["node-0"]; ok {
+			t.Errorf("expected \"name\" field to override node-%%d fallback, got: %+v", nodes)
+		}
+		if counts.SecretsFile != 1 {
+			t.Errorf("expected SecretsFile count of 1, got: %+v", counts)
+		}
+	})
+
+	t.Run("secrets.json falls back to node-%d naming when name is omitted", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		pabConfigDir := filepath.Join(tmpDir, "pab")
+		if err := os.MkdirAll(pabConfigDir, 0755); err != nil {
+			t.Fatalf("failed to create mock config dir: %v", err)
+		}
+		secretsPath := filepath.Join(pabConfigDir, "secrets.json")
+		secretsJSON := `{"nodes":[` +
+			`{"url":"http://a.example.com:5380","token":"tok-a"},` +
+			`{"name":"b","url":"http://b.example.com:5380","token":"tok-b"},` +
+			`{"url":"http://c.example.com:5380","token":"tok-c"}` +
+			`]}`
+		if err := os.WriteFile(secretsPath, []byte(secretsJSON), 0600); err != nil {
+			t.Fatalf("failed to write secrets file: %v", err)
+		}
+
+		nodes, _, err := resolveNodesWithSources()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := nodes["node-0"]; !ok {
+			t.Errorf("expected fallback name node-0 for unnamed first entry, got: %+v", nodes)
+		}
+		if _, ok := nodes["b"]; !ok {
+			t.Errorf("expected named node \"b\", got: %+v", nodes)
+		}
+		if _, ok := nodes["node-2"]; !ok {
+			t.Errorf("expected fallback name node-2 for unnamed third entry, got: %+v", nodes)
+		}
+	})
+
+	t.Run("environment and secrets.json merge with visible source counts", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		t.Setenv("TECHNITIUM_URL", "http://solo.example.com:5380")
+		t.Setenv("TECHNITIUM_TOKEN", "solo-token")
+
+		pabConfigDir := filepath.Join(tmpDir, "pab")
+		if err := os.MkdirAll(pabConfigDir, 0755); err != nil {
+			t.Fatalf("failed to create mock config dir: %v", err)
+		}
+		secretsPath := filepath.Join(pabConfigDir, "secrets.json")
+		secretsJSON := `{"nodes":[` +
+			`{"name":"backup1","url":"http://backup1.example.com:5380","token":"tok1"},` +
+			`{"name":"backup2","url":"http://backup2.example.com:5380","token":"tok2"}` +
+			`]}`
+		if err := os.WriteFile(secretsPath, []byte(secretsJSON), 0600); err != nil {
+			t.Fatalf("failed to write secrets file: %v", err)
+		}
+
+		nodes, counts, err := resolveNodesWithSources()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(nodes) != 3 {
+			t.Fatalf("expected 3 total nodes, got %d: %+v", len(nodes), nodes)
+		}
+		if counts.Environment != 1 {
+			t.Errorf("expected Environment count of 1, got %d", counts.Environment)
+		}
+		if counts.SecretsFile != 2 {
+			t.Errorf("expected SecretsFile count of 2, got %d", counts.SecretsFile)
+		}
+	})
+
+	t.Run("malformed secrets.json surfaces an error instead of looking like zero nodes", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+		pabConfigDir := filepath.Join(tmpDir, "pab")
+		if err := os.MkdirAll(pabConfigDir, 0755); err != nil {
+			t.Fatalf("failed to create mock config dir: %v", err)
+		}
+		secretsPath := filepath.Join(pabConfigDir, "secrets.json")
+		if err := os.WriteFile(secretsPath, []byte(`{not valid json`), 0600); err != nil {
+			t.Fatalf("failed to write secrets file: %v", err)
+		}
+
+		nodes, _, err := resolveNodesWithSources()
+		if err == nil {
+			t.Fatalf("expected an error for malformed secrets.json, got nodes=%+v, err=nil", nodes)
+		}
+		if !strings.Contains(err.Error(), "parse") {
+			t.Errorf("expected parse-error message, got: %v", err)
 		}
 	})
 }

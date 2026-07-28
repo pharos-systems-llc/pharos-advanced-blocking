@@ -1,9 +1,9 @@
 ---
 layout: ../layouts/Layout.astro
 title: "Release Notes | Pharos Advanced Blocking"
+heading: "Release Notes"
+description: "What's new in each pab release — what changed, why it matters, and how to upgrade."
 ---
-
-# Release Notes
 
 ## v0.4.0 — Stability & Rendering Overhaul
 
@@ -21,7 +21,7 @@ v0.4.0 fixes critical TUI rendering issues that prevented content from displayin
 If you ran `pab` on v0.3.0, the welcome banner took up too much vertical space, pushing group details and search results off-screen. You had to scroll to see content that should fit on one screen.
 
 **What's Fixed:**
-The TUI now calculates exact terminal height and renders all content (banner + search results) within your terminal boundaries. No more off-screen content.
+The TUI now calculates exact terminal height and renders all content (search results, group details) within your terminal boundaries. No more off-screen content. (Note: the welcome banner itself is currently disabled pending redesign — see Known Limitations below — so this fix applies to the rest of the TUI's content.)
 
 **Why This Matters:**
 The whole point of an interactive TUI is *immediate visibility*. If content scrolls off-screen, you're fighting the interface, not using it.

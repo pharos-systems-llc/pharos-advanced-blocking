@@ -21,13 +21,19 @@ The tool is built **CLI-first** and structured as an **AI-agent-friendly** tool,
 
 ## 3. Functional Requirements
 
-### 3.1 Workspace Detection & Initialization
-When executed, the CLI will look for the presence of a configuration file in the working directory:
-*   By default, it searches for `dnsApp.config` (Technitium's native filename).
-*   If not found, it prompts the user with interactive options:
-    1.  **Create New**: Generate a clean, validated `dnsApp.config` template with default structural groups on disk.
-    2.  **Load Custom Path**: Specify a different config file path (e.g. `advanced-blocking-config.json`).
-    3.  **Fetch from Server**: Connect to one or more configured Technitium API endpoints, download the active running configuration, and write it to disk.
+### 3.1 Onboarding & Configuration Bootstrap (`pab init`)
+`pab` does not automatically prompt for setup when `dnsApp.config` is missing — any command that needs a config (including launching the TUI with no arguments) fails with a plain "configuration file not found" error instead. Bootstrapping is instead an explicit, dedicated command:
+
+```bash
+pab init [--node <name>] [-f|--force] [--json]
+```
+
+`pab init`:
+1.  **Resolves credentials** the same way `pab deploy`/`pab verify` do (environment variables for a single node, `secrets.json` for two or more — see §4.2) — prompting interactively for them if none are found, unless `--json` is set, in which case it errors clearly instead of prompting.
+2.  **Fetches** the live Advanced Blocking configuration from the resolved Technitium node. If the server has no configuration yet, `pab init` falls back to a minimal template (mirrored at `dnsApp.config.example` in the repository root) instead of leaving the user with nothing.
+3.  **When two or more nodes are configured**, checks that they agree on their current configuration before proceeding, and never auto-merges disagreeing nodes — it requires the user to explicitly pick one node as the source of truth via `--node`.
+4.  **Previews** the resolved configuration (group count, group names, network mapping count), clearly labeled as not yet saved. `--json` prints the full configuration and exits without writing or prompting.
+5.  **Requires explicit confirmation** (`[y/N]`, or `-f`/`--force` to skip it) before writing `dnsApp.config` to disk — including a structural diff against any existing local file on a re-run, so `pab init` never silently overwrites an existing configuration.
 
 ### 3.2 View & Query Modes (Human vs. AI Agent)
 *   **TUI Mode (Default for Interactive TTY)**:
@@ -63,6 +69,19 @@ Once validated, the CLI can sync the disk configuration to one or more target Te
 *   **Node Discovery**: Use `pab list-nodes` to view all available node identities before deploying.
 *   **Non-interactive Mode**: The `-f` (or `--force`) flag bypasses confirmation prompts for automation and scripting.
 
+### 3.6 Verification Engine (`pab verify`)
+`pab deploy` confirms a configuration was accepted by the Technitium API — it does not confirm the server is actually blocking anything. `pab verify` closes that loop:
+
+```bash
+pab verify --domain <domain> [--node <name>] [--group <name>] [--port <port>] [--json]
+```
+
+*   Sends a live DNS query for `--domain` directly to the target node's resolver (default port 53, Technitium's default DNS listener; `--port` overrides for a non-default deployment) — it does not rely on the system resolver or cache.
+*   Automatically attributes `--domain` to a group by searching the locally loaded config's `blockedDomains`/`blockedRegex` entries; domains only covered by a remote block-list URL can't be attributed automatically (pab does not fetch and parse remote list contents), so `--group` must be passed explicitly in that case.
+*   Compares the live response against the group's configured blocking behavior (`blockAsNxDomain` / `blockingAddresses`) and reports one of four outcomes: `blocked`, `not-blocked`, `inconclusive` (e.g. a sinkhole-style group with no `blockingAddresses` configured, so pab has nothing to compare the response against), or `error`.
+*   `--node` is required only when two or more nodes are configured; unlike `pab deploy`'s fan-out to every node, `pab verify` targets exactly one node per invocation.
+*   Exits non-zero unless the result is exactly `blocked`, so it chains safely after `pab deploy` in CI/CD: `pab deploy -f && pab verify --domain ads.example.com`.
+
 ---
 
 ## 4. Technical Specifications & Stack
@@ -71,23 +90,26 @@ Once validated, the CLI can sync the disk configuration to one or more target Te
 *   **CLI Router & Parser**: `github.com/spf13/cobra` for handling subcommands, flags, and arguments.
 *   **TUI Engine**: `github.com/charmbracelet/bubbletea` for rich terminal interactions.
 *   **Styling**: `github.com/charmbracelet/lipgloss` for padding, borders, and color definitions.
-*   **Interactive Prompts**: `github.com/AlecAivazis/survey` for simple wizard flows.
+*   **Interactive Prompts**: Simple wizard-style prompts (e.g. the `pab init` credential flow) use Go's standard `bufio.NewReader(stdin)` pattern already established by `pab deploy`'s confirmation prompt — no third-party prompt library is used.
 
 ### 4.2 Security & Credential Store
-To protect Technitium API tokens, the CLI will look for secrets in the following order:
-1.  **Environment Variables**: `TECHNITIUM_NODE_<name>_URL` and `TECHNITIUM_NODE_<name>_TOKEN` patterns (e.g., `TECHNITIUM_NODE_DNS1_URL`, `TECHNITIUM_NODE_DNS1_TOKEN`, `TECHNITIUM_NODE_DNS2_URL`, `TECHNITIUM_NODE_DNS2_TOKEN`).
-2.  **OS Secure Config Path**: If environment variables are absent, reads credentials from a local configuration directory (e.g. `~/.config/pab/secrets.json`).
-    *   **Array-Based Schema**: The `secrets.json` file uses an array structure to define all deployment nodes as a unit:
+Node count is the deciding factor for how credentials are supplied:
+
+1.  **Environment Variables — exactly one node**: `TECHNITIUM_URL` and `TECHNITIUM_TOKEN` configure a single Technitium node, registered internally as `"default"`. This is the right choice for a single-server home lab or a CI/CD job that only ever talks to one node. There is no multi-node environment variable pattern — two or more nodes require `secrets.json` (below).
+2.  **`secrets.json` — required for two or more nodes**: reads credentials from a local configuration directory (e.g. `~/.config/pab/secrets.json`).
+    *   **Array-Based Schema**: The `secrets.json` file uses an array structure to define all deployment nodes as a unit, with an optional `name` field per node (falls back to a positional `node-<index>` name when omitted):
         ```json
         {
           "nodes": [
-            {"url": "https://dns1.example.com:5385", "token": "api-token-dns1"},
-            {"url": "https://dns2.example.com:5385", "token": "api-token-dns2"}
+            {"name": "dns1", "url": "https://dns1.example.com:5385", "token": "api-token-dns1"},
+            {"name": "dns2", "url": "https://dns2.example.com:5385", "token": "api-token-dns2"}
           ]
         }
         ```
     *   **Requirements**: The CLI will refuse to run and print a warning if this configuration file does not have strict permissions (`chmod 600`), preventing other system users from reading the file contents.
-3.  **Onboarding Wizard**: Prompts to securely enter node URLs and tokens, saves them directly to `~/.config/pab/secrets.json` in the array format with permissions set automatically to `600`.
+    *   **CI/CD use**: `secrets.json` is also the correct mechanism for multi-node CI/CD deployments — write the file from a CI secret to a temp path with `chmod 600` immediately before running `pab deploy`, rather than trying to express multiple nodes as environment variables.
+3.  **Onboarding Wizard**: `pab init` prompts to securely enter node URL(s) and token(s). For a single node it prints the `export TECHNITIUM_URL=...`/`TECHNITIUM_TOKEN=...` lines for the user to add to their own shell profile (pab cannot persist environment variables on the user's behalf); for two or more nodes it writes directly to `~/.config/pab/secrets.json` in the array format above, with permissions set to `600` at creation time (not chmod'd after the fact).
+4.  **Visible resolution**: because environment variables and `secrets.json` can both contribute nodes at once (e.g. one node from `TECHNITIUM_URL` plus more from `secrets.json`), `pab list-nodes` and `pab init` report the merge explicitly (e.g. "1 from environment variables + 2 from secrets.json = 3 total") rather than blending sources silently.
 
 ### 4.3 Plugin Extensibility (Phase 6 - Completed)
 To support the future **Live Status Plugin** (e.g. displaying real-time queries and lease information across multiple nodes), the CLI core implements an RPC-like sub-process plugin engine:
@@ -97,7 +119,7 @@ To support the future **Live Status Plugin** (e.g. displaying real-time queries 
 
 ---
 
-### 5. Build, Release, & Installation (Completed & Verified)
+## 5. Build, Release, & Installation (Completed & Verified)
 
 ### 5.1 Compilation & Assembly (Completed)
 The project uses Go's native cross-compilation capability. We have integrated **GoReleaser** and version linker injections to compile versions and commits.
@@ -109,11 +131,12 @@ The project uses Go's native cross-compilation capability. We have integrated **
     *   Integrates with Debian-based systems' standard package registry.
     *   Exposes clean install and remove routes (`apt install ./pab.deb` / `apt remove pab`).
 
+The release workflow (`.github/workflows/release.yml`) fails the job outright if a published release ends up with zero assets, so an empty release can no longer ship silently.
+
 ### 5.3 Installation Scripts (Completed)
-*   **Bash Installer**: An `install.sh` script hosted in the Git repository that:
+*   **Bash Installer**: An `install.sh` script (mirrored in the Git repository and served from the marketing site) that:
     1.  Detects system CPU architecture (rejecting 32-bit x86 architectures).
     2.  Downloads the latest release binary matching the architecture from GitHub Releases.
-    3.  Verifies the SHA256 checksum against the official release manifest.
-    4.  Verifies Cosign cryptographic signatures if `cosign` is present.
+    3.  Verifies the SHA256 checksum automatically against the official release manifest before extracting.
+    4.  Prints manual Cosign signature verification instructions when `cosign` is present — the installer does not run `cosign verify-blob` automatically; verification is a manual follow-up step for now.
     5.  Extracts and installs the binary to `/usr/local/bin/pab` (using sudo) or falls back to local user installation in `~/.local/bin/pab`.
-

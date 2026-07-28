@@ -15,6 +15,31 @@ This project is an open-source tool developed by **Pharos Systems (LLC)** to bui
 
 ---
 
+## Getting Started (End Users)
+
+Already have a Technitium DNS server running the Advanced Blocking App? Get `pab` talking to it in four commands:
+
+```bash
+# 1. Install the pab binary (Linux amd64/arm64)
+curl -sSL https://iamrichardd.com/pharos-advanced-blocking/install.sh | bash
+
+# 2. Bootstrap dnsApp.config by fetching your server's live configuration
+#    (falls back to a starter template if the server has none yet)
+pab init
+
+# 3. Preview any local changes before they touch your server
+pab deploy --dry-run
+
+# 4. Confirm a domain is actually being blocked
+pab verify --domain ads.example.com
+```
+
+`pab init` resolves your Technitium credentials — environment variables (`TECHNITIUM_URL`/`TECHNITIUM_TOKEN`) for a single node, or `secrets.json` for two or more — prompting you for them interactively if neither is set up yet.
+
+For full credential setup, `.deb`/`.tar.gz` downloads, and the interactive TUI walkthrough, see the [Installation guide](https://iamrichardd.com/pharos-advanced-blocking/installation) and [User Guide](https://iamrichardd.com/pharos-advanced-blocking/user-guide) on the marketing site.
+
+---
+
 ## Getting Started (Development via Podman)
 
 To run or build the application without installing Go on your host workstation, you can run all compiler operations inside a Podman container using the public ECR mirror registry.
@@ -44,4 +69,4 @@ podman run --rm --security-opt seccomp=unconfined -v "$(pwd):/workspace:z" -w /w
 ---
 
 ## Product Specifications
-For detailed architecture, technical stack selections, functional workflows, and release guidelines, please refer to the [Product Requirements Document (PRD)](docs/06_technitium_blocking_cli_prd.md).
+For detailed architecture, technical stack selections, functional workflows, and release guidelines, please refer to the [Product Requirements Document (PRD)](PRD.md).
