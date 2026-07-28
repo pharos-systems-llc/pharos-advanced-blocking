@@ -6,13 +6,7 @@ This document outlines key technical constraints, workflows, and implementation 
 
 ## 🤖 CRITICAL DIRECTIVES FOR AI AGENTS (Do Not Bypass)
 
-1.  **No Host Tool Installation**: Do NOT attempt to install development tools (such as `golang-go` or `snap`) on the host system. All compilations, dependency updates (`go get`), and executions MUST be run inside the Podman container environment using the AWS ECR public mirror.
-2.  **Container Execution Flag**: Every `podman run` invocation MUST include the `--security-opt seccomp=unconfined` flag to bypass workstation sandbox restrictions (bdflush OCI permission errors).
-3.  **Strict Git Decoupling**: Do NOT write Go code that interacts with the `git` binary or attempts to commit files. All configuration changes must be written directly to disk (`dnsApp.config`), leaving Git management exclusively to the developer's external workflow.
-4.  **Technitium API Schema Integrity**: 
-    *   When fetching/updating DHCP leases, map the parameters to the correct Technitium keys: `address` (IP), `hardwareAddress` (MAC), `hostName` (Hostname), and `comments` (Description).
-    *   When deleting/releasing leases, use `/api/dhcp/scopes/removeReservedLease` and pass the `hardwareAddress` (formatted with colons) rather than the IP.
-5.  **Strict Security Checks**: The CLI must refuse to run and exit with a high-priority security error if the credentials file (`~/.config/pab/secrets.json`) is configured with permissions weaker than `chmod 600` (Unix user read/write only).
+See [`AGENTS.md`](AGENTS.md) at the repository root for the canonical Podman/containerization, git-decoupling, Technitium API schema, and credentials-guard rules — kept in one place, read by any coding agent, instead of duplicated here.
 
 ---
 
