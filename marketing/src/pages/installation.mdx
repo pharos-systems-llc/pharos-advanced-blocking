@@ -1,10 +1,9 @@
 ---
 layout: ../layouts/Layout.astro
 title: "Installation | Pharos Advanced Blocking"
+heading: "Installation"
+description: "Pharos Advanced Blocking (pab) is a lightweight, compiled binary designed to integrate safely with your existing Technitium host."
 ---
-# Installation
-
-Pharos Advanced Blocking (pab) is a lightweight, compiled binary designed to integrate safely with your existing Technitium host.
 
 Installing Pharos Advanced Blocking (`pab`) is designed to be straightforward across different Linux environments.
 
@@ -18,13 +17,17 @@ curl -sSL https://iamrichardd.com/pharos-advanced-blocking/install.sh | bash
 
 ## Debian/Ubuntu (.deb)
 
-If you prefer to manage the installation via `apt` or `dpkg`, you can download and install the Debian package directly.
+If you prefer to manage the installation via `apt` or `dpkg`, download the `.deb` package matching your architecture from the [latest GitHub release](https://github.com/iamrichardD/pharos-advanced-blocking/releases/latest). Release assets follow the pattern `pharos-advanced-blocking_<version>_linux_<amd64|arm64>.deb`.
+
+With the [GitHub CLI](https://cli.github.com/) installed:
 
 ```bash
-wget https://iamrichardd.com/pharos-advanced-blocking/releases/latest/pab_amd64.deb
-sudo dpkg -i pab_amd64.deb
+gh release download --repo iamrichardD/pharos-advanced-blocking --pattern '*_linux_amd64.deb'
+sudo dpkg -i pharos-advanced-blocking_*_linux_amd64.deb
 sudo apt-get install -f # To resolve any missing dependencies
 ```
+
+No `gh` CLI? Download the matching `.deb` file directly from the [Releases page](https://github.com/iamrichardD/pharos-advanced-blocking/releases/latest) and run `dpkg -i` on it.
 
 ## Post-Installation
 
@@ -33,3 +36,94 @@ After installation, the `pab` command will be available in your path. Verify the
 ```bash
 pab --version
 ```
+
+---
+
+## Why Pharos Instead of Technitium's Web UI?
+
+Technitium's web interface is excellent for interactive browsing and manual configuration. Pharos complements it with:
+
+- **Automation**: Map hundreds of clients at once with `pab map` commands or scripting
+- **CI/CD Integration**: Deploy changes from your pipeline without browser interaction
+- **Bulk Operations**: Update client groups or mappings for entire network segments
+- **Terminal Native**: Work directly from your shell or scripts; no web UI context switching
+- **Infrastructure as Code**: Store your DNS blocking config in version control and deploy reproducibly
+
+Use Technitium's web UI for one-off changes and exploration. Use Pharos when you need repeatability, automation, and integration with your deployment pipeline.
+
+---
+
+## Getting Started
+
+Now that you have Pharos Advanced Blocking installed, point it at your running Technitium server — no copy-paste, no blank JSON file.
+
+### Your First Command
+
+Start by exploring what `pab` can do:
+
+```bash
+pab --help
+```
+
+This shows you all available commands and options.
+
+### Bootstrap Your Configuration
+
+If you don't already have a local `dnsApp.config`, run:
+
+```bash
+pab init
+```
+
+`pab init` resolves your Technitium credentials (environment variables for a single node, or `secrets.json` for two or more — prompting you for them interactively if neither is set up yet), fetches the live Advanced Blocking configuration from your server, previews what it found, and asks you to confirm before writing anything to disk. If your server has no Advanced Blocking configuration yet, `pab init` falls back to a minimal starter template instead of leaving you with nothing.
+
+### Interactive Walkthrough
+
+The fastest way to see `pab` in action is to open the interactive TUI:
+
+1. **Launch the TUI** — Open your terminal in the directory containing your Technitium `dnsApp.config` file and run:
+   ```bash
+   pab
+   ```
+
+2. **Explore with Slash Commands** — Once the TUI is open, type `/help` to see available commands, then try:
+   - `/view groups` — See all your blocking groups
+   - Search for an IP address to view its group mapping
+   - `/exit` to close the TUI
+
+3. **Next, Read the Full Guide** — Head over to the [User Guide](/pharos-advanced-blocking/user-guide/) for detailed walkthroughs of the TUI, slash commands, and how to map client IPs to blocking groups.
+
+---
+
+## Common Next Steps
+
+Once you're comfortable with the basics, here's the natural progression to more advanced usage:
+
+### Setting Up Client Mapping
+
+Map client IPs to blocking groups using the command line:
+
+```bash
+pab map --ip 192.0.2.50 --group Kids
+```
+
+This assigns all DNS queries from `192.0.2.50` to the "Kids" blocking group. Learn more in the [User Guide](/pharos-advanced-blocking/user-guide/#mapping--deploying).
+
+### Configuring Groups and Policies
+
+Work with your Technitium blocking groups to:
+- Add or modify blocklists
+- Create group-specific policies
+- View detailed group information
+
+Refer to the [CLI Reference](/pharos-advanced-blocking/cli-reference/) for command syntax and examples.
+
+### Automating Deployments
+
+Once your configuration is working, consider automating client mapping or deployments through scripts or CI/CD pipelines. The `pab` command-line interface integrates easily into shell scripts and automation workflows. Chain `pab verify --domain <domain>` after `pab deploy` to confirm blocking actually took effect before your pipeline moves on.
+
+### Learn More
+
+- **Full User Guide:** [User Guide](/pharos-advanced-blocking/user-guide/) — Interactive mode, slash commands, and practical workflows
+- **Command Reference:** [CLI Reference](/pharos-advanced-blocking/cli-reference/) — All commands, flags, and examples
+- **Release Notes:** [Release Notes](/pharos-advanced-blocking/release-notes/) — What's new and recent improvements

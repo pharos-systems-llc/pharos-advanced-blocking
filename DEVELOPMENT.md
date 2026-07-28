@@ -82,3 +82,53 @@ podman run --rm --security-opt seccomp=unconfined -v "$(pwd):/workspace:z" -w /w
 # Compile the binary natively to host disk
 podman run --rm --security-opt seccomp=unconfined -v "$(pwd):/workspace:z" -w /workspace public.ecr.aws/docker/library/golang:1.22-bookworm go build -o pab cmd/pab/main.go
 ```
+
+---
+
+## 📝 Documentation & Versioning Standards
+
+### Marketing Site Sync Requirements
+
+The marketing site (`marketing/src/pages/`) must stay synchronized with actual TUI features, and must remain structurally correct (build/routing configuration, internal links):
+
+1. **Feature Claims**: All claims in user-guide.mdx, cli-reference.mdx must match implemented code
+   - Example: "Tab completion works for command names" — verify this in `internal/tui/tui.go` (lines 780-820)
+   - Example: "Search is case-insensitive" — verify in search logic before promoting feature
+
+2. **Removed Features**: If a feature is removed or postponed, update marketing immediately
+   - Example: `/view group <name> blocked` was removed — clean up references in marketing docs
+   - Mark postponed features as "Coming in future release" instead of claiming current support
+
+3. **Release Notes**: Create `release-notes.mdx` for every major release
+   - Document what changed, why it matters, known limitations
+   - Include upgrade path for users on previous versions
+   - Link to relevant GitHub issues or discussions for context
+
+4. **`pab init` Prompt Transcript**: The interactive prompt transcript in `marketing/src/pages/user-guide.mdx` (in the Credentials section) must be re-verified against `internal/commands/init.go`'s `promptForCredentials` function whenever any prompt text (passed to `fmt.Fprint*` or `promptLine()` calls) changes
+   - Verify the exact strings, order, and branching match the code
+   - Update the transcript to match if any prompts change
+
+5. **Internal Cross-Page Links**: All in-body Markdown links between doc pages (`[text](/user-guide)` style, in `installation.mdx`, `cli-reference.mdx`, `user-guide.mdx`) must be hardcoded with the site's base path prefix (currently `/pharos-advanced-blocking/`, matching `base:` in `marketing/astro.config.mjs`) and a trailing slash — e.g. `[User Guide](/pharos-advanced-blocking/user-guide/)`, not `[User Guide](/user-guide)`
+   - Unlike the top nav in `Layout.astro` (which builds links dynamically via `${baseUrl}/user-guide/`), these are plain Markdown links with no way to reference `astro.config.mjs`'s `base` value automatically
+   - If `base:` in `astro.config.mjs` is ever changed, grep all three `.mdx` files for `](/pharos-advanced-blocking` and update every match
+   - Anchor-only links (`#some-heading`) never need this prefix
+   - If `base:` ever changes, that's the moment to switch these links to relative paths (e.g. `../user-guide/`, since all doc pages are flat siblings in `src/pages/`) instead of re-running this hardcode-and-grep fix again — relative paths have zero coupling to `base:` and would have avoided this entire class of bug from the start
+
+### Version Tags & Release Workflow
+
+1. **Semantic Versioning**: Follow SemVer — v0.X.Y format
+   - Major: Breaking changes to CLI or config schema
+   - Minor: New features or significant bug fixes
+   - Patch: Small fixes without user-facing impact
+
+2. **Release Process**:
+   ```bash
+   git tag v0.X.Y                    # Create version tag
+   gh release create v0.X.Y          # Create GitHub release with notes
+   # (Marketing site updates published simultaneously)
+   ```
+
+3. **Commit Messages**: Use conventional commits to auto-generate changelog
+   - `fix: ...` → Patch version bump
+   - `feat: ...` → Minor version bump
+   - `BREAKING CHANGE:` in body → Major version bump

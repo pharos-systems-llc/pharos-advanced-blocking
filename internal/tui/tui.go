@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,11 +14,63 @@ import (
 	"github.com/iamrichardd/pharos-advanced-blocking/internal/config"
 )
 
+// max returns the maximum of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// ContentType represents the type of content being rendered
+type ContentType int
+
+const (
+	ContentTypeEmpty ContentType = iota
+	ContentTypeTable
+	ContentTypeHelp
+	ContentTypeError
+	ContentTypeCommandList
+	ContentTypeViewNetworkGroupMap
+	ContentTypeViewGroups
+	ContentTypeViewGroup
+)
+
+// String returns the string representation for debugging
+func (ct ContentType) String() string {
+	switch ct {
+	case ContentTypeEmpty:
+		return "empty"
+	case ContentTypeTable:
+		return "table"
+	case ContentTypeHelp:
+		return "help"
+	case ContentTypeError:
+		return "error"
+	case ContentTypeCommandList:
+		return "command_list"
+	case ContentTypeViewNetworkGroupMap:
+		return "view_networkgroupmap"
+	case ContentTypeViewGroups:
+		return "view_groups"
+	case ContentTypeViewGroup:
+		return "view_group"
+	default:
+		return "unknown"
+	}
+}
+
 // SlashCommand represents a command with name, aliases, and description
 type SlashCommand struct {
 	Name        string
 	Aliases     []string
 	Description string
+}
+
+// SearchMatch represents a match in search mode (IP or group)
+type SearchMatch struct {
+	Type  string // "ip" or "group"
+	Value string // "192.0.2.50" or "servers"
 }
 
 // Slash command registry with all available commands
@@ -55,6 +108,14 @@ var viewSubcommands = []ViewSubcommand{
 	{Name: "groups", Description: "List all groups with device counts"},
 	{Name: "group", Description: "Show details for a specific group (followed by group name)"},
 	{Name: "networkGroupMap", Description: "Show all IP-to-group mappings"},
+}
+
+// CommandEvent represents a single command execution in the history
+type CommandEvent struct {
+	Timestamp time.Time
+	Command   string   // e.g., "/view groups"
+	Output    string   // multi-line output
+	Lines     []string // split output for rendering
 }
 
 // Brand Colors aligned with Pharos aesthetics
@@ -110,21 +171,28 @@ type ClientEntry struct {
 type Model struct {
 	clients             []ClientEntry
 	filtered            []ClientEntry
-	searchInput         textinput.Model
+	unifiedInput        textinput.Model
 	width               int
 	height              int
 	err                 error
 	ready               bool
-	contentType         string // "table", "help", "status", "empty", "command_list", "view_networkgroupmap", "view_groups", "view_group"
-	contentText         string // For help/status messages
+	contentType         ContentType // Type-safe content rendering
+	contentText         string      // For help/status messages
 	commandMatches      []SlashCommand
 	selectedCommand     int
 	inTypeaheadMode     bool
 	inPostTabCompletion bool           // Prevent re-entering typeahead after Tab completion
 	groups              []config.Group // Groups from config
 	viewGroupName       string         // Current group being viewed
-	viewGroupKind       string         // "all", "blocklists", "allowed", "blocked"
+	viewGroupKind       string         // "all", "blocklists", "allowed"
 	scrollOffset        int            // Current scroll position in viewport
+	commandHistory      []CommandEvent // Append-only history log
+	historyScroll       int            // Scroll position in history view
+	firstRun            bool           // Track first-time user for welcome banner
+	// Search typeahead (Phase 4)
+	searchMatches     []SearchMatch // Matching IPs/groups
+	searchMatchIndex  int           // Currently selected match
+	inSearchTypeahead bool          // True when Tab was pressed in search mode
 }
 
 // New creates and initializes a new TUI model, preparing the text input.
@@ -133,7 +201,7 @@ type Model struct {
 // (pab map, pab deploy) with --config if you need to specify a custom config path.
 func New(cfg *config.Config) *Model {
 	ti := textinput.New()
-	ti.Placeholder = "Search IP or Group..."
+	ti.Placeholder = "Search or type /help for commands"
 	ti.Focus()
 	ti.CharLimit = 156
 	ti.Width = 40
@@ -152,9 +220,9 @@ func New(cfg *config.Config) *Model {
 
 	m := &Model{
 		clients:             clients,
-		searchInput:         ti,
+		unifiedInput:        ti,
 		ready:               true,
-		contentType:         "empty",
+		contentType:         ContentTypeEmpty,
 		contentText:         "",
 		commandMatches:      []SlashCommand{},
 		selectedCommand:     0,
@@ -162,6 +230,13 @@ func New(cfg *config.Config) *Model {
 		inPostTabCompletion: false,
 		viewGroupName:       "",
 		viewGroupKind:       "all",
+		commandHistory:      []CommandEvent{},
+		historyScroll:       0,
+		firstRun:            true,
+		// Search typeahead initialization
+		searchMatches:    []SearchMatch{},
+		searchMatchIndex: 0,
+		inSearchTypeahead: false,
 	}
 	// Add groups from config
 	if cfg != nil {
@@ -174,6 +249,18 @@ func New(cfg *config.Config) *Model {
 // Init initializes the Bubble Tea application and triggers configuration loading.
 func (m *Model) Init() tea.Cmd {
 	return textinput.Blink
+}
+
+// appendHistory adds a command event to the history log
+func (m *Model) appendHistory(command string, output string) {
+	event := CommandEvent{
+		Timestamp: time.Now(),
+		Command:   command,
+		Output:    output,
+		Lines:     strings.Split(output, "\n"),
+	}
+	m.commandHistory = append(m.commandHistory, event)
+	m.historyScroll = 0 // Reset scroll to top of new history
 }
 
 // Update handles incoming events (key presses, window resizing) and state changes.
@@ -197,7 +284,63 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// Handle navigation in typeahead mode
+		// Handle navigation in search typeahead mode
+		if m.inSearchTypeahead && len(m.searchMatches) > 0 {
+			switch msg.Type {
+			case tea.KeyUp:
+				if m.searchMatchIndex > 0 {
+					m.searchMatchIndex--
+				} else {
+					// Wrap around to end
+					m.searchMatchIndex = len(m.searchMatches) - 1
+				}
+				m.unifiedInput.SetValue(m.searchMatches[m.searchMatchIndex].Value)
+				return m, nil
+			case tea.KeyDown:
+				if m.searchMatchIndex < len(m.searchMatches)-1 {
+					m.searchMatchIndex++
+				} else {
+					// Wrap around to beginning
+					m.searchMatchIndex = 0
+				}
+				m.unifiedInput.SetValue(m.searchMatches[m.searchMatchIndex].Value)
+				return m, nil
+			case tea.KeyTab:
+				// Tab to cycle to next match
+				m.searchMatchIndex = (m.searchMatchIndex + 1) % len(m.searchMatches)
+				m.unifiedInput.SetValue(m.searchMatches[m.searchMatchIndex].Value)
+				return m, nil
+			case tea.KeyEnter:
+				// User confirmed selection, execute search immediately
+				// Step 1: Exit typeahead mode and clear state
+				m.inSearchTypeahead = false
+				m.searchMatches = []SearchMatch{}
+				m.searchMatchIndex = 0
+
+				// Step 2: Execute search with the populated input value
+				m.contentType = ContentTypeTable
+				m.scrollOffset = 0
+				m.filterClients()
+
+				// Step 3: Clear input and log to history
+				searchQuery := m.unifiedInput.Value()
+				m.unifiedInput.SetValue("")
+				if searchQuery != "" {
+					m.appendHistory(searchQuery, "")
+				}
+
+				return m, nil
+			case tea.KeyEsc:
+				// Exit search typeahead without executing
+				m.inSearchTypeahead = false
+				m.searchMatches = []SearchMatch{}
+				m.searchMatchIndex = 0
+				m.unifiedInput.SetValue("")
+				return m, nil
+			}
+		}
+
+		// Handle navigation in command typeahead mode
 		if m.inTypeaheadMode && len(m.commandMatches) > 0 {
 			switch msg.Type {
 			case tea.KeyUp:
@@ -213,50 +356,105 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.KeyTab:
 				// Tab completion: complete to selected command name + space
 				selectedCmd := m.commandMatches[m.selectedCommand]
-				m.searchInput.SetValue(selectedCmd.Name + " ")
-				m.searchInput.CursorEnd()
+				m.unifiedInput.SetValue(selectedCmd.Name + " ")
+				m.unifiedInput.CursorEnd()
 				// Exit typeahead after completion so user can type subcommand arguments without re-filtering
 				m.inTypeaheadMode = false
 				m.inPostTabCompletion = true // Prevent re-entering typeahead mode
 				m.commandMatches = []SlashCommand{}
 				m.selectedCommand = 0
-				m.contentType = "empty"
+				m.contentType = ContentTypeEmpty
 				return m, nil
 			case tea.KeyEnter:
 				// Execute the selected command
 				selectedCmd := m.commandMatches[m.selectedCommand]
-				return m.executeCommand(selectedCmd.Name)
+				// Parse the command name to extract the command and any args
+				parts := strings.Fields(selectedCmd.Name)
+				cmd := strings.TrimPrefix(parts[0], "/")
+				args := []string{}
+				if len(parts) > 1 {
+					args = parts[1:]
+				}
+				return m.executeCommand(cmd, args)
 			}
 		}
 
 		// Handle scrolling in normal (non-typeahead) mode
-		if !m.inTypeaheadMode && m.contentType != "empty" {
+		if !m.inTypeaheadMode && !m.inSearchTypeahead {
 			switch msg.Type {
 			case tea.KeyUp:
-				// Scroll up in viewport
-				if m.scrollOffset > 0 {
+				// Scroll priority must mirror View()'s rendering priority: explicit
+				// content types (Help, ViewGroup, ViewGroups, etc.) render via
+				// renderContent() which uses scrollOffset, so up/down must move scrollOffset
+				// for them -- even when commandHistory is non-empty (executing /view
+				// appends to history, so it almost always is). Fall back to the history
+				// view (historyScroll) only in table/empty mode.
+				if m.contentType != ContentTypeEmpty && m.contentType != ContentTypeTable {
+					if m.scrollOffset > 0 {
+						m.scrollOffset--
+					}
+				} else if len(m.commandHistory) > 0 {
+					if m.historyScroll > 0 {
+						m.historyScroll--
+					}
+				} else if m.contentType != ContentTypeEmpty && m.scrollOffset > 0 {
 					m.scrollOffset--
 				}
 				return m, nil
 			case tea.KeyDown:
-				// Scroll down in viewport
-				// Conservative limit to prevent overflow
-				if m.scrollOffset < 100 {
+				// See KeyUp above: content types that render via renderContent() must
+				// scroll scrollOffset; the history view scrolls historyScroll.
+				if m.contentType != ContentTypeEmpty && m.contentType != ContentTypeTable {
+					// Conservative limit to prevent runaway offset
+					if m.scrollOffset < 100 {
+						m.scrollOffset++
+					}
+				} else if len(m.commandHistory) > 0 {
+					// Conservative limit to prevent overflow
+					if m.historyScroll < 100 {
+						m.historyScroll++
+					}
+				} else if m.contentType != ContentTypeEmpty && m.scrollOffset < 100 {
 					m.scrollOffset++
 				}
 				return m, nil
 			}
 		}
 
+		// Handle Tab key for search typeahead before forwarding to textinput
+		if msg.Type == tea.KeyTab {
+			rawInput := m.unifiedInput.Value()
+			input := strings.TrimSpace(rawInput)
+
+			// Check if we're in search mode (no leading /)
+			if !strings.HasPrefix(input, "/") && input != "" {
+				// SEARCH MODE: Tab completion for IPs/groups
+				if !m.inSearchTypeahead {
+					// First Tab press - activate typeahead
+					m.searchMatches = m.getSearchMatches(input)
+					if len(m.searchMatches) > 0 {
+						m.inSearchTypeahead = true
+						m.searchMatchIndex = 0
+						// Update input with first match
+						m.unifiedInput.SetValue(m.searchMatches[0].Value)
+						return m, nil
+					}
+				}
+			}
+		}
+
 		// Forward key presses to the search text input component
 		var tiCmd tea.Cmd
-		m.searchInput, tiCmd = m.searchInput.Update(msg)
+		m.unifiedInput, tiCmd = m.unifiedInput.Update(msg)
 
-		rawInput := m.searchInput.Value()
+		rawInput := m.unifiedInput.Value()
 		input := strings.TrimSpace(rawInput)
 
-		// Check if we're in slash command mode
-		if strings.HasPrefix(input, "/") {
+		// Parse the input using unified parser
+		parsed := ParseUnifiedInput(input)
+
+		switch parsed.Type {
+		case InputTypeCommand:
 			// Clear post-Tab-completion flag if user starts a new command (just "/")
 			if input == "/" {
 				m.inPostTabCompletion = false
@@ -268,11 +466,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// 2. We're not in post-Tab-completion mode (prevents re-entry when typing subcommand args)
 			if len(m.commandMatches) > 0 && !m.inPostTabCompletion {
 				m.inTypeaheadMode = true
-				m.contentType = "command_list"
+				m.contentType = ContentTypeCommandList
 			} else {
 				// No matches or in post-Tab-completion mode - user is typing subcommand args, stay out of typeahead
 				m.inTypeaheadMode = false
-				m.contentType = "empty"
+				m.contentType = ContentTypeEmpty
 			}
 			m.selectedCommand = 0
 
@@ -280,27 +478,54 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Type == tea.KeyEnter {
 				if len(m.commandMatches) > 0 {
 					selectedCmd := m.commandMatches[m.selectedCommand]
-					return m.executeCommand(selectedCmd.Name)
+					// Parse the command name to extract the command and any args
+					parts := strings.Fields(selectedCmd.Name)
+					cmd := strings.TrimPrefix(parts[0], "/")
+					args := []string{}
+					if len(parts) > 1 {
+						args = parts[1:]
+					}
+					return m.executeCommand(cmd, args)
 				}
 				// Try to execute what was typed as-is
-				trimmed := strings.TrimPrefix(input, "/")
-				return m.executeCommand("/" + trimmed)
+				// Extract just the command name (first word), not the full input
+				parts := strings.Fields(strings.TrimPrefix(input, "/"))
+				if len(parts) == 0 {
+					return m, nil
+				}
+				cmd := parts[0]
+				args := parts[1:]
+				return m.executeCommand(cmd, args)
 			}
-		} else {
+
+		case InputTypeSearch:
 			// Not in slash command mode
 			m.inTypeaheadMode = false
 			m.inPostTabCompletion = false
 			m.commandMatches = []SlashCommand{}
 			m.selectedCommand = 0
 
-			// Update filter results dynamically on every keystroke
-			if input == "" {
-				m.contentType = "empty"
-			} else {
-				m.contentType = "table"
+			// Exit search typeahead if user is typing new search
+			if !m.inSearchTypeahead {
+				m.searchMatches = []SearchMatch{}
+				m.searchMatchIndex = 0
 			}
+
+			// Update filter results dynamically on every keystroke
+			m.contentType = ContentTypeTable
 			m.scrollOffset = 0
 			m.filterClients()
+
+		case InputTypeEmpty:
+			// No-op for empty input
+			m.inTypeaheadMode = false
+			m.inPostTabCompletion = false
+			m.commandMatches = []SlashCommand{}
+			m.selectedCommand = 0
+			m.inSearchTypeahead = false
+			m.searchMatches = []SearchMatch{}
+			m.searchMatchIndex = 0
+			m.contentType = ContentTypeEmpty
 		}
 
 		cmd = tea.Batch(cmd, tiCmd)
@@ -310,17 +535,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // executeCommand executes a slash command and updates the model state
-func (m *Model) executeCommand(input string) (tea.Model, tea.Cmd) {
-	// Parse input into command and arguments
-	trimmed := strings.TrimPrefix(input, "/")
-	parts := strings.Fields(trimmed)
-	if len(parts) == 0 {
-		return m, nil
-	}
-
-	cmd := parts[0]
-	args := parts[1:] // Remaining arguments
-
+// cmd should be the command name (without leading slash), and args are the parsed arguments
+func (m *Model) executeCommand(cmd string, args []string) (tea.Model, tea.Cmd) {
+	// cmd and args are already parsed by ParseUnifiedInput
 	cmdLower := strings.ToLower(cmd)
 
 	// Check if it matches any command or alias
@@ -337,21 +554,40 @@ func (m *Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Reconstruct the full command string for history
+	input := "/" + cmd
+	if len(args) > 0 {
+		input += " " + strings.Join(args, " ")
+	}
+
+	// FIX #1: Dismiss welcome banner for ANY command execution
+	m.firstRun = false
+
+
 	switch cmdLower {
 	case "exit", "quit":
 		return m, tea.Quit
 	case "help", "?":
-		// Show help text in content area
-		m.contentType = "help"
-		m.contentText = helpText()
+		// Show help text in the content area. Setting contentType to ContentTypeHelp
+		// makes View() render this as primary content; the contentType routing takes
+		// priority over the history view, so appending to history here does NOT hide
+		// the help text (the earlier "remove help from history" patch was treating a
+		// symptom of the layout-height bug, not the cause).
+		helpOutput := helpText()
+		m.contentType = ContentTypeHelp
+		m.contentText = helpOutput
+		m.appendHistory(input, helpOutput)
 		m.scrollOffset = 0
-		m.searchInput.SetValue("")
+		m.unifiedInput.SetValue("")
 		m.inTypeaheadMode = false
 		m.inPostTabCompletion = false
+		m.firstRun = false // Dismiss first-run banner when a command is executed
 		return m, nil
 	case "clear", "c":
-		m.searchInput.SetValue("")
-		m.contentType = "empty"
+		m.commandHistory = []CommandEvent{}
+		m.historyScroll = 0
+		m.unifiedInput.SetValue("")
+		m.contentType = ContentTypeEmpty
 		m.contentText = ""
 		m.scrollOffset = 0
 		m.commandMatches = []SlashCommand{}
@@ -359,18 +595,22 @@ func (m *Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 		m.inTypeaheadMode = false
 		m.inPostTabCompletion = false
 		m.filterClients()
+		m.firstRun = false // Dismiss first-run banner when a command is executed
 		return m, nil
 	case "view", "v":
-		m.handleView(args)
+		viewOutput := m.handleViewWithOutput(args)
+		m.appendHistory(input, viewOutput)
 		m.scrollOffset = 0
-		m.searchInput.SetValue("")
+		m.unifiedInput.SetValue("")
 		m.inTypeaheadMode = false
 		m.inPostTabCompletion = false
+		m.firstRun = false // Dismiss first-run banner when a command is executed
 		return m, nil
 	default:
 		// Unknown command, clear it
-		m.searchInput.SetValue("")
+		m.unifiedInput.SetValue("")
 		m.inTypeaheadMode = false
+		m.firstRun = false // Dismiss first-run banner when a command is executed
 		return m, nil
 	}
 }
@@ -378,32 +618,75 @@ func (m *Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 // handleView processes /view subcommands
 func (m *Model) handleView(args []string) {
 	if len(args) == 0 {
-		m.contentType = "help"
+		m.contentType = ContentTypeHelp
 		return
 	}
 
 	switch args[0] {
 	case "networkGroupMap", "map":
-		m.contentType = "view_networkgroupmap"
+		m.contentType = ContentTypeViewNetworkGroupMap
 	case "groups":
-		m.contentType = "view_groups"
+		m.contentType = ContentTypeViewGroups
 	case "group":
 		if len(args) < 2 {
 			// /view group needs a group name
-			m.contentType = "help"
+			m.contentType = ContentTypeHelp
 			return
 		}
 		groupName := args[1]
 		kind := "all"
 		if len(args) > 2 {
-			kind = args[2] // "blocklists", "allowed", "blocked"
+			kind = args[2] // "blocklists", "allowed"
 		}
 		m.viewGroupName = groupName
 		m.viewGroupKind = kind
-		m.contentType = "view_group"
+		m.contentType = ContentTypeViewGroup
 	default:
-		m.contentType = "help"
+		m.contentType = ContentTypeHelp
 	}
+}
+
+// handleViewWithOutput processes /view subcommands and returns the output
+func (m *Model) handleViewWithOutput(args []string) string {
+	if len(args) == 0 {
+		m.contentType = ContentTypeHelp
+		return ""
+	}
+
+	switch args[0] {
+	case "networkGroupMap", "map":
+		m.contentType = ContentTypeViewNetworkGroupMap
+		return m.renderNetworkGroupMap()
+	case "groups":
+		m.contentType = ContentTypeViewGroups
+		return m.renderGroupsList()
+	case "group":
+		if len(args) < 2 {
+			// /view group needs a group name
+			m.contentType = ContentTypeHelp
+			return "group name required\nUsage: /view group <name>"
+		}
+		groupName := args[1]
+		kind := "all"
+		if len(args) > 2 {
+			kind = args[2] // "blocklists", "allowed"
+		}
+		m.viewGroupName = groupName
+		m.viewGroupKind = kind
+		m.contentType = ContentTypeViewGroup
+		return m.renderGroupDetail()
+	default:
+		m.contentType = ContentTypeHelp
+		return "Unknown view subcommand\n" + viewSubcommandHelp()
+	}
+}
+
+// viewSubcommandHelp returns help text for view subcommands
+func viewSubcommandHelp() string {
+	return `Available View Subcommands:
+  /view networkGroupMap    Show all IP to Group mappings
+  /view groups             List all configured groups
+  /view group <name>       Show group details (all domains)`
 }
 
 // findGroup helper finds a group by case-insensitive name match
@@ -519,9 +802,9 @@ func filterCommands(input string) []SlashCommand {
 
 	// Check if we're looking for view subcommands
 	// Handle /view with or without space, and /v with space
-	// Examples: "/view", "/view ", "/view g", "/v ", "/v g"
+	// Examples: "/view", "/view ", "/view g", "/v", "/v ", "/v g"
 	// This allows prefix filtering while preventing re-entering typeahead after Tab completion
-	if input == "/view" || strings.HasPrefix(input, "/view ") || strings.HasPrefix(input, "/v ") {
+	if input == "/view" || strings.HasPrefix(input, "/view ") || input == "/v" || strings.HasPrefix(input, "/v ") {
 		return filterViewSubcommands(input)
 	}
 
@@ -627,7 +910,7 @@ func renderCommandList(commands []SlashCommand, selected int) string {
 
 // filterClients updates the filtered client list based on the search input query.
 func (m *Model) filterClients() {
-	query := strings.ToLower(m.searchInput.Value())
+	query := strings.ToLower(m.unifiedInput.Value())
 	if query == "" {
 		m.filtered = make([]ClientEntry, len(m.clients))
 		copy(m.filtered, m.clients)
@@ -643,6 +926,39 @@ func (m *Model) filterClients() {
 	m.filtered = filtered
 }
 
+// getSearchMatches gathers searchable entities (IPs and group names) matching the prefix
+func (m *Model) getSearchMatches(prefix string) []SearchMatch {
+	var matches []SearchMatch
+	prefixLower := strings.ToLower(prefix)
+
+	// Map to track unique values and avoid duplicates
+	seen := make(map[string]bool)
+
+	// Collect unique IPs from clients
+	for _, c := range m.clients {
+		if strings.Contains(strings.ToLower(c.IP), prefixLower) {
+			key := c.IP
+			if !seen[key] {
+				matches = append(matches, SearchMatch{"ip", c.IP})
+				seen[key] = true
+			}
+		}
+	}
+
+	// Search group names
+	for _, g := range m.groups {
+		if strings.Contains(strings.ToLower(g.Name), prefixLower) {
+			key := g.Name
+			if !seen[key] {
+				matches = append(matches, SearchMatch{"group", g.Name})
+				seen[key] = true
+			}
+		}
+	}
+
+	return matches
+}
+
 // helpText returns the help message for available commands
 func helpText() string {
 	return `Available Commands:
@@ -656,6 +972,13 @@ View Commands:
   /view group <name>       Show group details (all domains)
   /view group <name> blocklists  Show blocked domains
   /view group <name> allowed     Show allowed domains
+
+Keyboard Shortcuts:
+  Tab                      Autocomplete commands (type /v, press Tab)
+  Tab (in search)          Autocomplete IPs or groups (type 192, press Tab)
+  ↑↓                       Navigate search results or command matches
+  Enter                    Execute search or command
+  Esc                      Clear current input
 
 Tips:
   • Start typing to search by IP or Group
@@ -686,30 +1009,116 @@ func (m *Model) renderTable() string {
 	return b.String()
 }
 
+// renderHistory renders the full command history from oldest to newest
+func (m *Model) renderHistory(contentHeight int) string {
+	if len(m.commandHistory) == 0 {
+		return "No command history yet. Type a command to get started.\n(Use / to see available commands)"
+	}
+
+	var output strings.Builder
+	if contentHeight < 3 {
+		contentHeight = 3
+	}
+
+	// Calculate total lines needed
+	totalLines := 0
+	for _, event := range m.commandHistory {
+		totalLines += len(event.Lines) + 3 // +3 for timestamp line, separator, spacing
+	}
+
+	// Build the full history text first
+	var fullHistoryLines []string
+	for _, event := range m.commandHistory {
+		timestamp := event.Timestamp.Format("15:04:05")
+		fullHistoryLines = append(fullHistoryLines, fmt.Sprintf("%s | %s", timestamp, event.Command))
+
+		// Add output lines
+		for _, line := range event.Lines {
+			fullHistoryLines = append(fullHistoryLines, line)
+		}
+
+		// Add separator
+		fullHistoryLines = append(fullHistoryLines, "---")
+	}
+
+	// Apply scroll offset to show scrolled view
+	startIdx := m.historyScroll
+	endIdx := startIdx + contentHeight
+	if endIdx > len(fullHistoryLines) {
+		endIdx = len(fullHistoryLines)
+	}
+	if startIdx >= len(fullHistoryLines) {
+		startIdx = len(fullHistoryLines) - contentHeight
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+
+	var lines []string
+	if startIdx > 0 || endIdx < len(fullHistoryLines) {
+		lines = fullHistoryLines[startIdx:endIdx]
+	} else {
+		lines = fullHistoryLines
+	}
+
+	// Pad with blank lines to fill available height
+	for len(lines) < contentHeight {
+		lines = append(lines, "")
+	}
+
+	output.WriteString(strings.Join(lines, "\n"))
+	return output.String()
+}
+
+// renderSearchTypeaheadList renders the search typeahead matches
+func (m *Model) renderSearchTypeaheadList() string {
+	if !m.inSearchTypeahead || len(m.searchMatches) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(headerStyle.Render("Search matches:") + "\n")
+
+	for i, match := range m.searchMatches {
+		prefix := "  "
+		if i == m.searchMatchIndex {
+			prefix = "→ " // Highlight selected match
+		}
+
+		matchType := fmt.Sprintf("[%s]", match.Type)
+		typeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+
+		line := fmt.Sprintf("%s%-40s %s", prefix, match.Value, typeStyle.Render(matchType))
+		b.WriteString(line + "\n")
+	}
+
+	return b.String()
+}
+
 // renderContent renders content based on the current content type
-func (m *Model) renderContent() string {
-	contentHeight := m.height - 10 // Account for: title(2) + search(3) + footer(1) + border+padding(4)
+func (m *Model) renderContent(contentHeight int) string {
 	if contentHeight < 3 {
 		contentHeight = 3
 	}
 
 	var content string
 	switch m.contentType {
-	case "help":
+	case ContentTypeHelp:
 		content = m.contentText
-	case "command_list":
+	case ContentTypeCommandList:
 		content = renderCommandList(m.commandMatches, m.selectedCommand)
-	case "table":
+	case ContentTypeTable:
 		content = m.renderTable()
-	case "status":
+	case ContentTypeError:
 		content = m.contentText
-	case "view_networkgroupmap":
+	case ContentTypeViewNetworkGroupMap:
 		content = m.renderNetworkGroupMap()
-	case "view_groups":
+	case ContentTypeViewGroups:
 		content = m.renderGroupsList()
-	case "view_group":
+	case ContentTypeViewGroup:
 		content = m.renderGroupDetail()
-	default: // "empty"
+	default: // ContentTypeEmpty
 		content = "Start typing to search by IP or Group, or type /help for commands"
 	}
 
@@ -753,33 +1162,138 @@ func (m *Model) View() string {
 	// Fixed title at top
 	title := titleStyle.Render("Pharos Advanced Blocking")
 
-	// Dynamic content area in the middle
-	renderedContent := m.renderContent()
-	contentBox := lipgloss.NewStyle().
-		Padding(0, 1).
-		Render(renderedContent)
+
+	// DISABLED: Welcome banner removed for v0.3.0 GA
+	// The banner state logic is correct (m.firstRun dismissed properly) but UI rendering
+	// still displays it despite correct internal state. Root cause TBD for v0.3.1.
+	// Disabling to unblock release - users can access help via /help command.
+
+	// Dismiss banner on first keystroke
+	if m.firstRun && m.unifiedInput.Value() != "" {
+		m.firstRun = false
+	}
+
+	// Build the fixed "chrome" (search box, footer, optional typeahead list) FIRST so
+	// we can measure their real heights and give the content area exactly the leftover
+	// space. The title is already rendered above. Sizing the content off measured
+	// chrome heights (instead of hard-coded magic numbers) keeps the total frame within
+	// the terminal even when the footer text wraps to a second line.
 
 	// Search box (fixed above footer)
 	searchBox := lipgloss.NewStyle().
 		Padding(0, 1).
 		MarginTop(1).
-		Render(m.searchInput.View())
+		Render(m.unifiedInput.View())
+
+	// Search typeahead list (if active)
+	var typeaheadView string
+	if m.inSearchTypeahead {
+		typeaheadView = m.renderSearchTypeaheadList()
+	}
 
 	// Footer help status line (fixed at bottom)
-	footerText := "ctrl+c / esc: exit | /help: commands | /clear: reset search"
-	// Add scroll hint if content is scrollable
-	if m.contentType != "empty" && !m.inTypeaheadMode {
-		footerText += " | ↑↓: scroll"
+	var footerText string
+	if m.inSearchTypeahead {
+		// Show search typeahead navigation hints
+		footerText = "↑↓: navigate | Tab: cycle | Enter: select | Esc: cancel"
+	} else if m.inTypeaheadMode {
+		// Show command typeahead navigation hints
+		footerText = "↑↓: navigate | Tab: complete | Enter: execute | Esc: cancel"
+	} else {
+		// Show default hints
+		footerText = "ctrl+c / esc: exit | /help: commands | /clear: reset"
+		// Scroll hint. When an explicit content type is displayed (Help, ViewGroup,
+		// ViewGroups, etc.) ↑↓ scroll that content (scrollOffset), matching the
+		// rendering/scroll priority in View() and Update(); otherwise ↑↓ scroll the
+		// command history.
+		if m.contentType != ContentTypeEmpty && m.contentType != ContentTypeTable {
+			footerText += " | ↑↓: scroll"
+		} else if len(m.commandHistory) > 0 {
+			footerText += " | ↑↓: scroll through history"
+			footerText += fmt.Sprintf(" | (%d commands in history)", len(m.commandHistory))
+		} else if m.contentType != ContentTypeEmpty {
+			footerText += " | ↑↓: scroll"
+		}
 	}
-	footer := footerStyle.Render(footerText)
+	// innerWidth is the text area width inside baseStyle: the frame reserves 2 columns
+	// for the border and baseStyle.Padding(1,2) reserves 2 more on each side, so the
+	// wrappable width is m.width-8. Constrain the footer to this width so the height we
+	// measure below matches what the outer baseStyle will actually render (the footer
+	// text wraps to a second line once history hints are appended). Without this the
+	// measured height is one short and the frame overflows by a line.
+	innerWidth := m.width - 8
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	fStyle := footerStyle
+	if m.width > 0 {
+		fStyle = fStyle.Width(innerWidth)
+	}
+	footer := fStyle.Render(footerText)
 
-	// Assemble the layout vertically: title, content, search, footer
+	// Compute the content height from the ACTUAL rendered chrome heights.
+	//
+	// The whole layout is wrapped by baseStyle, which sets Height(m.height-2) and adds
+	// a RoundedBorder (+2 lines). Height() in lipgloss includes the style's own vertical
+	// padding, so the space available to the JoinVertical layout is:
+	//     (m.height - 2) - 2 (baseStyle vertical padding) == m.height - 4
+	// Content then gets whatever remains after title/search/footer/typeahead.
+	//
+	// Historically this was hard-coded as (m.height - 10) AND an equally large explicit
+	// spacer was appended, which double-counted the vertical space and produced a frame
+	// ~2x the terminal height. In the alt-screen renderer that pushed all real content
+	// (help text, group lists, command list) off the top of the screen -- the reported
+	// "no output / garbled output" bug. Measuring the chrome removes both the magic
+	// numbers and the redundant spacer.
+	contentHeight := 10
+	if m.height > 0 {
+		contentHeight = (m.height - 4) -
+			lipgloss.Height(title) -
+			lipgloss.Height(searchBox) -
+			lipgloss.Height(footer)
+		if typeaheadView != "" {
+			contentHeight -= lipgloss.Height(typeaheadView)
+		}
+	}
+	if contentHeight < 3 {
+		contentHeight = 3
+	}
+
+	// Dynamic content area in the middle.
+	// Prioritize explicit content types (Help, ViewGroups, etc.) over history.
+	var renderedContent string
+	if m.contentType != ContentTypeEmpty && m.contentType != ContentTypeTable {
+		// Help, ViewGroups, ViewGroup, etc. should be shown as primary content
+		renderedContent = m.renderContent(contentHeight)
+	} else if len(m.commandHistory) > 0 {
+		// Only show history if we're in table/empty mode
+		renderedContent = m.renderHistory(contentHeight)
+	} else {
+		renderedContent = m.renderContent(contentHeight)
+	}
+
+	// MaxWidth (ANSI-aware, truncates rather than wraps) guarantees no content line can
+	// wrap when the outer bordered style is applied, which would otherwise add unbudgeted
+	// rows and overflow the frame. MaxHeight caps the block to the reserved rows.
+	contentBox := lipgloss.NewStyle().
+		Padding(0, 1).
+		MaxHeight(contentHeight).
+		MaxWidth(innerWidth).
+		Render(renderedContent)
+
+	// Assemble the layout vertically: title, content, search, typeahead (if active), footer.
+	// renderContent()/renderHistory() already pad their output to exactly contentHeight,
+	// which pushes the search box and footer to the bottom -- no separate spacer needed.
+	layoutParts := []string{title, contentBox}
+	layoutParts = append(layoutParts, searchBox)
+	if typeaheadView != "" {
+		layoutParts = append(layoutParts, typeaheadView)
+	}
+	layoutParts = append(layoutParts, footer)
+
 	layout := lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		contentBox,
-		searchBox,
-		footer,
+		lipgloss.Top,
+		layoutParts...,
 	)
 
 	// Apply responsive padding and borders to wrap the layout

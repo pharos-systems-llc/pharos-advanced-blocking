@@ -18,13 +18,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// SecretsConfig defines the structure for local secrets file ~/.config/pab/secrets.json
+// SecretsConfig defines the structure for local secrets file ~/.config/pab/secrets.json.
+// This file is the required mechanism for configuring two or more Technitium nodes;
+// environment variables (TECHNITIUM_URL/TECHNITIUM_TOKEN) only support a single node.
 type SecretsConfig struct {
 	Nodes []NodeConfig `json:"nodes"`
 }
 
 // NodeConfig defines the URL and token for a Technitium node.
 type NodeConfig struct {
+	// Name optionally identifies the node (e.g. "prod", "dns1"). When omitted,
+	// resolveNodes falls back to a positional "node-<index>" name.
+	Name  string `json:"name,omitempty"`
 	URL   string `json:"url"`
 	Token string `json:"token"`
 }
@@ -79,6 +84,8 @@ func NewRootCmd(stdin io.Reader, stdout, stderr io.Writer, version, commit, date
 	rootCmd.AddCommand(newUnmapCmd(global, stdout, stderr))
 	rootCmd.AddCommand(newDeployCmd(global, stdin, stdout, stderr))
 	rootCmd.AddCommand(newListNodesCmd(global, stdout, stderr))
+	rootCmd.AddCommand(newInitCmd(global, stdin, stdout, stderr))
+	rootCmd.AddCommand(newVerifyCmd(global, stdout, stderr))
 
 	// Load Plugins
 	configDir, err := os.UserConfigDir()
@@ -316,7 +323,7 @@ func newListNodesCmd(global *GlobalFlags, stdout, stderr io.Writer) *cobra.Comma
 		Long:  `Display all configured Technitium nodes from environment variables and secrets.json with their URLs.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Resolve Technitium nodes from environment and secrets.json
-			nodes, err := resolveNodes()
+			nodes, counts, err := resolveNodesWithSources()
 			if err != nil {
 				return err
 			}
@@ -324,6 +331,11 @@ func newListNodesCmd(global *GlobalFlags, stdout, stderr io.Writer) *cobra.Comma
 			if len(nodes) == 0 {
 				fmt.Fprintf(stdout, "No Technitium nodes configured. Set environment variables or define them in ~/.config/pab/secrets.json\n")
 				return nil
+			}
+
+			// Make a multi-source merge visible instead of blending silently.
+			if counts.Environment > 0 && counts.SecretsFile > 0 {
+				fmt.Fprintf(stdout, "Found %d node(s) from environment variables + %d from secrets.json = %d total\n\n", counts.Environment, counts.SecretsFile, len(nodes))
 			}
 
 			// Sort node names for consistent output
@@ -355,7 +367,7 @@ func loadConfig(path string) (*config.Config, error) {
 	bytes, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("configuration file %q not found. Please verify the file path", path)
+			return nil, fmt.Errorf("configuration file %q not found. Run 'pab init' to bootstrap one from a Technitium server (or a blank template), or verify the file path", path)
 		}
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -382,73 +394,90 @@ func saveConfig(path string, cfg *config.Config) error {
 	return nil
 }
 
-// resolveNodes discovers Technitium node configurations from environment variables and secrets.json.
+// NodeSourceCounts summarizes how many resolved nodes came from each credential
+// source, so callers can surface a visible merge (e.g. "1 from environment
+// variables + 2 from secrets.json = 3 total") instead of blending silently.
+type NodeSourceCounts struct {
+	Environment int
+	SecretsFile int
+}
+
+// resolveNodes discovers Technitium node configurations from environment variables
+// and secrets.json. It is a thin wrapper around resolveNodesWithSources for callers
+// that don't need source visibility.
 func resolveNodes() (map[string]NodeConfig, error) {
+	nodes, _, err := resolveNodesWithSources()
+	return nodes, err
+}
+
+// resolveNodesWithSources discovers Technitium node configurations from environment
+// variables and secrets.json, and reports how many nodes were contributed by each
+// source.
+//
+// Target design: environment variables (TECHNITIUM_URL/TECHNITIUM_TOKEN) support
+// exactly one node, registered as "default". Two or more nodes require
+// ~/.config/pab/secrets.json.
+func resolveNodesWithSources() (map[string]NodeConfig, NodeSourceCounts, error) {
 	nodes := make(map[string]NodeConfig)
+	var counts NodeSourceCounts
 
-	// 1. Try loading from environment variables: TECHNITIUM_URL_<suffix> and TECHNITIUM_TOKEN_<suffix>
-	// or TECHNITIUM_NODE_<suffix>_URL/TOKEN, plus fallback single node envs: TECHNITIUM_URL and TECHNITIUM_TOKEN.
-	for _, env := range os.Environ() {
-		parts := strings.SplitN(env, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := parts[0]
-		val := parts[1]
-
-		if strings.HasPrefix(key, "TECHNITIUM_URL_") {
-			suffix := strings.TrimPrefix(key, "TECHNITIUM_URL_")
-			tokenKey := "TECHNITIUM_TOKEN_" + suffix
-			if tokenVal := os.Getenv(tokenKey); tokenVal != "" {
-				nodes["node-"+suffix] = NodeConfig{
-					URL:   val,
-					Token: tokenVal,
-				}
-			}
-		} else if strings.HasPrefix(key, "TECHNITIUM_NODE_") && strings.HasSuffix(key, "_URL") {
-			nodePart := strings.TrimPrefix(key, "TECHNITIUM_NODE_")
-			nodePart = strings.TrimSuffix(nodePart, "_URL")
-			tokenKey := fmt.Sprintf("TECHNITIUM_NODE_%s_TOKEN", nodePart)
-			if tokenVal := os.Getenv(tokenKey); tokenVal != "" {
-				name := strings.ToLower(nodePart)
-				nodes[name] = NodeConfig{
-					URL:   val,
-					Token: tokenVal,
-				}
-			}
-		}
-	}
-
-	// Fallback to single/default node env variable
+	// 1. Single-node environment variable fallback: TECHNITIUM_URL / TECHNITIUM_TOKEN -> "default".
 	if defaultURL := os.Getenv("TECHNITIUM_URL"); defaultURL != "" {
 		if defaultToken := os.Getenv("TECHNITIUM_TOKEN"); defaultToken != "" {
 			nodes["default"] = NodeConfig{
 				URL:   defaultURL,
 				Token: defaultToken,
 			}
+			counts.Environment++
 		}
 	}
 
-	// 2. Read ~/.config/pab/secrets.json
+	// 2. Read ~/.config/pab/secrets.json (required for 2+ nodes).
 	configDir, err := os.UserConfigDir()
 	if err == nil {
 		secretsPath := filepath.Join(configDir, "pab", "secrets.json")
 		if _, statErr := os.Stat(secretsPath); statErr == nil {
-			// Permission is verified in PersistentPreRunE, so we just read here
+			// Permission is verified in PersistentPreRunE, so we just read here.
+			// A malformed/unreadable file must surface as an error rather than
+			// silently behaving like "no secrets.json" -- otherwise a typo can
+			// look identical to zero configured nodes to every caller.
 			fileBytes, readErr := os.ReadFile(secretsPath)
-			if readErr == nil {
-				var sc SecretsConfig
-				if jsonErr := json.Unmarshal(fileBytes, &sc); jsonErr == nil {
-					for i, node := range sc.Nodes {
-						name := fmt.Sprintf("node-%d", i)
-						nodes[name] = node
-					}
+			if readErr != nil {
+				return nil, counts, fmt.Errorf("failed to read secrets file %q: %w", secretsPath, readErr)
+			}
+			var sc SecretsConfig
+			if jsonErr := json.Unmarshal(fileBytes, &sc); jsonErr != nil {
+				return nil, counts, fmt.Errorf("failed to parse secrets file %q: %w", secretsPath, jsonErr)
+			}
+			for i, node := range sc.Nodes {
+				name := node.Name
+				if name == "" {
+					name = fmt.Sprintf("node-%d", i)
 				}
+				nodes[name] = node
+				counts.SecretsFile++
 			}
 		}
 	}
 
-	return nodes, nil
+	return nodes, counts, nil
+}
+
+// writeSecretsFile marshals a SecretsConfig to JSON and writes it to path with
+// strict 0600 permissions set directly at creation (via config.WriteSecretsFile).
+// It is the single write path used by `pab init` (and any future command) to
+// persist ~/.config/pab/secrets.json consistently.
+func writeSecretsFile(path string, sc SecretsConfig) error {
+	data, err := json.MarshalIndent(sc, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to format secrets config: %w", err)
+	}
+
+	if err := config.WriteSecretsFile(path, data); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // printStructuralDiff renders a simplified, human-readable structural diff.

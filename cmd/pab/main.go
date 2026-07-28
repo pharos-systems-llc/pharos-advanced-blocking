@@ -53,7 +53,7 @@ func launchTUI(configPath string) error {
 	bytes, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("configuration file %q not found. Please verify the file path", configPath)
+			return fmt.Errorf("configuration file %q not found. Run 'pab init' to bootstrap one from a Technitium server (or a blank template), or verify the file path", configPath)
 		}
 		return fmt.Errorf("failed to read config file: %w", err)
 	}

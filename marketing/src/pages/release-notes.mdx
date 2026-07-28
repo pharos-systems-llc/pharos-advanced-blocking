@@ -1,0 +1,128 @@
+---
+layout: ../layouts/Layout.astro
+title: "Release Notes | Pharos Advanced Blocking"
+heading: "Release Notes"
+description: "What's new in each pab release — what changed, why it matters, and how to upgrade."
+---
+
+## v0.4.0 — Stability & Rendering Overhaul
+
+**Release Date**: July 2026
+
+### Overview
+
+v0.4.0 fixes critical TUI rendering issues that prevented content from displaying on-screen, restores arrow key navigation, and solves Tab completion conflicts. If you experienced any of these issues in v0.3.0, v0.4.0 is essential for you.
+
+### Critical Fixes
+
+#### Terminal Rendering: Content No Longer Cut Off
+
+**What Was Broken:**
+If you ran `pab` on v0.3.0, the welcome banner took up too much vertical space, pushing group details and search results off-screen. You had to scroll to see content that should fit on one screen.
+
+**What's Fixed:**
+The TUI now calculates exact terminal height and renders all content (search results, group details) within your terminal boundaries. No more off-screen content. (Note: the welcome banner itself is currently disabled pending redesign — see Known Limitations below — so this fix applies to the rest of the TUI's content.)
+
+**Why This Matters:**
+The whole point of an interactive TUI is *immediate visibility*. If content scrolls off-screen, you're fighting the interface, not using it.
+
+**Should You Upgrade?**
+If you experienced the welcome banner pushing content off-screen → upgrade immediately.
+If content always fit for you → you likely had a wider terminal; this fixes it for all sizes.
+
+---
+
+#### Arrow Key Scrolling: Up/Down Navigation Now Works Correctly
+
+**What Was Broken:**
+Press ↑ to scroll up through group details → nothing happened.
+Press ↓ to scroll down → nothing happened.
+The arrow keys were being routed to the wrong counter, so scrolling was silently ignored.
+
+**What's Fixed:**
+↑ and ↓ now scroll through content correctly. If you're viewing a large group's blocklist, you can navigate with arrow keys.
+
+**Why This Matters:**
+In a terminal UI, arrow keys are the primary navigation tool. Broken arrow keys break the entire interface.
+
+**Should You Upgrade?**
+If arrow key scrolling didn't work for you on v0.3.0 → upgrade immediately.
+
+---
+
+#### Tab Completion: Subcommand Arguments Now Work After Tab
+
+**What Was Broken:**
+On v0.3.0, you could do:
+1. Type `/v` and press Tab → `/view ` (correct)
+2. Type `groups` → `/view groups` (correct so far)
+3. BUT: As you typed `groups`, the typeahead would re-trigger, showing command suggestions instead of letting you finish typing the argument
+
+**What's Fixed:**
+After Tab-completing a command, you can now type arguments freely. The typeahead stays dormant until you clear the input and start a new command.
+
+**Why This Matters:**
+Tab completion should *help* you, not fight you. If completion breaks argument typing, it defeats the purpose.
+
+**Should You Upgrade?**
+If you use Tab-completed commands with arguments → upgrade.
+If you type full commands without Tab → low priority for you.
+
+---
+
+#### Multi-Word Command Parsing: Complex Commands Now Execute
+
+**What Was Broken:**
+On v0.3.0, the command `/view group Default` would *look* like it executed, but nothing would happen. The parser was passing the entire string "view group Default" as the command, instead of splitting it into command ("view") and arguments (["group", "Default"]).
+
+**What's Fixed:**
+Commands with multiple words now parse correctly. `/view group Default` now properly routes to the "view" command with arguments ["group", "Default"], and the group details render.
+
+**Why This Matters:**
+If basic commands silently fail, users think the tool is broken or their input is wrong. This was a silent failure—the hardest kind to debug.
+
+**Should You Upgrade?**
+If you tried `/view group <name>` and nothing happened → upgrade immediately.
+
+### Quality Improvements
+
+- Added comprehensive rendering frame tests (render_frame_test.go)
+- Added regression tests for group detail scrolling
+- Improved search typeahead accuracy
+- Enhanced error messages for invalid group names
+- Verified terminal height calculation across screen sizes (80x24 to 120x40)
+
+### Known Limitations
+
+These features are planned but not yet implemented:
+
+- **Group name Tab autocomplete**: Typing `kid[Tab]` will filter to groups containing "kid" and navigate through matches. Full autocomplete (typing `kid[Tab]` to become `Kids`) is coming in a future release.
+
+- **Subcommand Tab completion**: Typing `/view gr[Tab]` will not auto-complete to "/view groups". You must type the full subcommand name manually. This is a roadmap item for v0.5.0.
+
+- **Welcome banner**: The first-run banner is currently disabled pending redesign. We're working on a version that better explains the "/" for commands interaction. You can still access help with `/help`.
+
+### Upgrade Path
+
+**From v0.3.0**: 
+
+1. **Backup**: Save a copy of your current `~/.config/pab/clients.json` (just in case)
+2. **Replace Binary**: Replace your v0.3.0 `pab` binary with v0.4.0
+3. **Test**: Run `pab` and verify `/view groups` and arrow key scrolling work
+4. **Deploy**: If you use `pab deploy`, test with `--dry-run` first: `pab deploy --dry-run`
+
+No configuration changes are needed—v0.4.0 is fully compatible with v0.3.0 configs.
+
+**Recommended**: Upgrade immediately if you experienced TUI rendering issues, scrolling problems, or Tab completion failures. All fixes are transparent—no workflow changes needed.
+
+---
+
+## v0.3.0 — Interactive TUI & Tab Completion
+
+(Historical release)
+
+---
+
+## v0.2.0 — Search & Filtering
+
+(Historical release)
