@@ -11,9 +11,10 @@ Canonical, tool-agnostic instructions for any AI coding agent working in this re
   podman run --rm --security-opt seccomp=unconfined \
     -v "$(pwd):/workspace:z" \
     -w /workspace \
-    public.ecr.aws/docker/library/golang:1.22-bookworm \
+    public.ecr.aws/docker/library/golang:1.22-bookworm@sha256:3d699e4d15d0f8f13c9195c0632a16702b8cbdece2955af1c23b37ae5d55a253 \
     <command>
   ```
+- **Digest pin, not floating tag**: the image above is pinned by digest (currently resolving to Go 1.22.12, matching `go.mod`'s toolchain directive) so a registry-side retag can't silently change the toolchain underneath agents/CI. When bumping the Go version, update `go.mod`, this digest, and the CI `go-version` values in the same change — re-resolve the digest with `crane digest public.ecr.aws/docker/library/golang:<new-tag>` or equivalent, don't hand-edit it.
 - **`--security-opt seccomp=unconfined` is non-negotiable** on every `podman run` invocation — bypasses OCI sandbox restrictions that otherwise cause permission errors on this workstation (specifically, `bdflush` OCI permission errors).
 - **`:z` mount suffix is required** for SELinux compatibility on the workspace volume mount.
 - **Feedback loop targets**: unit tests 3-5s, binary compile 5-10s, GoReleaser snapshot 15-20s. If a command exceeds these, suspect container startup overhead or a cold image pull, not a real regression.
