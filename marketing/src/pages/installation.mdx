@@ -17,17 +17,17 @@ curl -sSL https://iamrichardd.com/pharos-advanced-blocking/install.sh | bash
 
 ## Debian/Ubuntu (.deb)
 
-If you prefer to manage the installation via `apt` or `dpkg`, download the `.deb` package matching your architecture from the [latest GitHub release](https://github.com/iamrichardD/pharos-advanced-blocking/releases/latest). Release assets follow the pattern `pharos-advanced-blocking_<version>_linux_<amd64|arm64>.deb`.
+If you prefer to manage the installation via `apt` or `dpkg`, download the `.deb` package matching your architecture from the [latest GitHub release](https://github.com/pharos-systems-llc/pharos-advanced-blocking/releases/latest). Release assets follow the pattern `pharos-advanced-blocking_<version>_linux_<amd64|arm64>.deb`.
 
 With the [GitHub CLI](https://cli.github.com/) installed:
 
 ```bash
-gh release download --repo iamrichardD/pharos-advanced-blocking --pattern '*_linux_amd64.deb'
+gh release download --repo pharos-systems-llc/pharos-advanced-blocking --pattern '*_linux_amd64.deb'
 sudo dpkg -i pharos-advanced-blocking_*_linux_amd64.deb
 sudo apt-get install -f # To resolve any missing dependencies
 ```
 
-No `gh` CLI? Download the matching `.deb` file directly from the [Releases page](https://github.com/iamrichardD/pharos-advanced-blocking/releases/latest) and run `dpkg -i` on it.
+No `gh` CLI? Download the matching `.deb` file directly from the [Releases page](https://github.com/pharos-systems-llc/pharos-advanced-blocking/releases/latest) and run `dpkg -i` on it.
 
 ## Post-Installation
 

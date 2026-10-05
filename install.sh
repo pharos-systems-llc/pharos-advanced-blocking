@@ -31,7 +31,7 @@ fi
 
 echo -e "${GREEN}Detected OS: $OS, Architecture: $ARCH${NC}"
 
-REPO="iamrichardD/pharos-advanced-blocking"
+REPO="pharos-systems-llc/pharos-advanced-blocking"
 LATEST_URL="https://api.github.com/repos/$REPO/releases/latest"
 
 echo -e "${BLUE}Fetching latest version info...${NC}"
@@ -104,11 +104,11 @@ echo -e "${BLUE}Verifying signatures...${NC}"
 if command -v cosign &> /dev/null; then
     echo -e "${YELLOW}Notice: cosign is installed. Signature verification is available but requires downloading the signature bundle.${NC}"
     echo -e "You can manually verify by downloading the bundle from the release page and running:"
-    echo -e "  cosign verify-blob $CHECKSUMS_NAME --bundle <bundle-file> --certificate-identity \"https://github.com/iamrichardD/pharos-advanced-blocking/.github/workflows/release.yml@refs/tags/$VERSION\" --certificate-oidc-issuer \"https://token.actions.githubusercontent.com\""
+    echo -e "  cosign verify-blob $CHECKSUMS_NAME --bundle <bundle-file> --certificate-identity \"https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$VERSION\" --certificate-oidc-issuer \"https://token.actions.githubusercontent.com\""
 else
     echo -e "${YELLOW}Notice: cosign is not installed. To verify signatures manually in the future:${NC}"
     echo -e "  1. Install cosign (https://docs.sigstore.dev/cosign/installation/)"
-    echo -e "  2. Run: cosign verify-blob $CHECKSUMS_NAME --bundle <bundle-file> --certificate-identity \"https://github.com/iamrichardD/pharos-advanced-blocking/.github/workflows/release.yml@refs/tags/$VERSION\" --certificate-oidc-issuer \"https://token.actions.githubusercontent.com\""
+    echo -e "  2. Run: cosign verify-blob $CHECKSUMS_NAME --bundle <bundle-file> --certificate-identity \"https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$VERSION\" --certificate-oidc-issuer \"https://token.actions.githubusercontent.com\""
 fi
 
 echo -e "${BLUE}Extracting binary...${NC}"

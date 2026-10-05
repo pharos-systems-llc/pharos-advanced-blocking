@@ -30,7 +30,7 @@ nfpms:
   - id: pab-nfpms
     package_name: pab
     file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    homepage: https://github.com/iamrichardD/pharos-advanced-blocking
+    homepage: https://github.com/pharos-systems-llc/pharos-advanced-blocking
     maintainer: Pharos Advanced Blocking Team
     description: Advanced Blocking application.
     license: AGPL-3.0
