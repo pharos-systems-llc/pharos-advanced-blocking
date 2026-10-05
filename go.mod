@@ -1,4 +1,4 @@
-module github.com/iamrichardd/pharos-advanced-blocking
+module github.com/pharos-systems-llc/pharos-advanced-blocking
 
 go 1.22.12
 

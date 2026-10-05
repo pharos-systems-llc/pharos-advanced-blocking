@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iamrichardd/pharos-advanced-blocking/internal/config"
+	"github.com/pharos-systems-llc/pharos-advanced-blocking/internal/config"
 )
 
 // These tests exercise the ACTUAL View() render output (not just model state).

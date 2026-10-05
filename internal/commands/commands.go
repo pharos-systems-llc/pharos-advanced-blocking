@@ -12,9 +12,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/iamrichardd/pharos-advanced-blocking/internal/client"
-	"github.com/iamrichardd/pharos-advanced-blocking/internal/config"
-	"github.com/iamrichardd/pharos-advanced-blocking/internal/plugin"
+	"github.com/pharos-systems-llc/pharos-advanced-blocking/internal/client"
+	"github.com/pharos-systems-llc/pharos-advanced-blocking/internal/config"
+	"github.com/pharos-systems-llc/pharos-advanced-blocking/internal/plugin"
 	"github.com/spf13/cobra"
 )
 

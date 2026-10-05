@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/iamrichardd/pharos-advanced-blocking/internal/config"
+	"github.com/pharos-systems-llc/pharos-advanced-blocking/internal/config"
 )
 
 // ============================================================================

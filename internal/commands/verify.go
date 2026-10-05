@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iamrichardd/pharos-advanced-blocking/internal/config"
+	"github.com/pharos-systems-llc/pharos-advanced-blocking/internal/config"
 	"github.com/spf13/cobra"
 )
 

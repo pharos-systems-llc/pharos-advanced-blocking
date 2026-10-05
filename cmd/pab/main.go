@@ -8,9 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
 
-	"github.com/iamrichardd/pharos-advanced-blocking/internal/commands"
-	"github.com/iamrichardd/pharos-advanced-blocking/internal/config"
-	"github.com/iamrichardd/pharos-advanced-blocking/internal/tui"
+	"github.com/pharos-systems-llc/pharos-advanced-blocking/internal/commands"
+	"github.com/pharos-systems-llc/pharos-advanced-blocking/internal/config"
+	"github.com/pharos-systems-llc/pharos-advanced-blocking/internal/tui"
 )
 
 var (

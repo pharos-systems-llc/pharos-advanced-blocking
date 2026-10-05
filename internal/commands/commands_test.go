@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iamrichardd/pharos-advanced-blocking/internal/config"
+	"github.com/pharos-systems-llc/pharos-advanced-blocking/internal/config"
 )
 
 // helperWriteConfig creates a mock config file.
